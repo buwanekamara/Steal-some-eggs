@@ -1,0 +1,336 @@
+import {
+  EGG_BY_ID,
+  FEATURED,
+  FUSE,
+  HATCH,
+  INDEX_COMPLETE_REWARD,
+  INDEX_REWARD,
+  MUTATION_BY_ID,
+  PETS,
+  PET_BY_ID,
+  RARITY_COLOR,
+  SELL_MULT,
+  SHOP_ITEMS,
+  TRAILS,
+  formatShort,
+  hatchOdds,
+  petDisplayName,
+  petIncome,
+  type InvPet,
+  type InventoryMsg,
+} from "@egg/shared";
+import { Modal, esc } from "./Modal.ts";
+
+/** Everything the menus need to draw, refreshed whenever the inventory or money changes. */
+export interface MenuData {
+  inv: InventoryMsg | null;
+  money: number;
+  trail: string;
+}
+
+export interface MenuActions {
+  shopBuy(item: string, count?: number): void;
+  claim(which: string): void;
+  sell(uids: string[]): void;
+  fuse(uids: string[]): void;
+  buyTrail(id: string): void;
+  equipTrail(id: string): void;
+}
+
+const petCard = (p: InvPet, extra = "", selected = false) => {
+  const def = PET_BY_ID.get(p.species)!;
+  const mut = p.mutation ? MUTATION_BY_ID.get(p.mutation) : undefined;
+  return `<button class="pet-card${selected ? " sel" : ""}${p.equipped ? " on" : ""}" data-uid="${p.uid}" style="--rc:${RARITY_COLOR[def.rarity]}">
+    <span class="pc-kg">${p.weight}Kg</span>
+    <span class="pc-icon">${def.icon}</span>
+    <span class="pc-name" style="color:${mut ? mut.color : "#fff"}">${esc(petDisplayName(def, p.mutation))}</span>
+    <span class="pc-inc">$${formatShort(p.income)}/s</span>${extra}
+  </button>`;
+};
+
+const countdown = (ms: number) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${d}d ${h}h ${m}m ${String(s % 60).padStart(2, "0")}s`;
+};
+
+/**
+ * All Phase 5 menus: Shop (Gems), Pet Index, Sell Pets, Fuse Machine and Trails Shop.
+ */
+export class Menus {
+  readonly shop: Modal;
+  readonly index: Modal;
+  readonly sellM: Modal;
+  readonly fuseM: Modal;
+  readonly trails: Modal;
+  private data: MenuData = { inv: null, money: 0, trail: "" };
+  private sellSel = new Set<string>();
+  private sellSort: "weight" | "value" = "value";
+  private fuseSel: string[] = [];
+  private indexPet = "";
+
+  constructor(root: HTMLElement, private actions: MenuActions) {
+    this.shop = new Modal(root, "Shop", "#4ce11f", [
+      { id: "featured", label: "Featured", icon: "🏷️", color: "#ff5a3a" },
+      { id: "speed", label: "Speed", icon: "👟", color: "#2f9bff" },
+      { id: "money", label: "Money", icon: "💵", color: "#4ce11f" },
+    ]);
+    this.index = new Modal(root, "Pet Index", "#1fc0ff", [
+      { id: "world", label: "World", icon: "🌍", color: "#1f8bff" },
+      { id: "limited", label: "Limited", icon: "⏳", color: "#b8860b" },
+    ]);
+    this.sellM = new Modal(root, "🐾 Sell Pets", "#4ce11f");
+    this.fuseM = new Modal(root, "Fuse Machine", "#8a4dff");
+    this.trails = new Modal(root, "Trails Shop", "#c04dff");
+    for (const m of [this.shop, this.index, this.sellM, this.fuseM, this.trails]) m.onTab = () => this.render(m);
+    this.sellM.onClose = () => this.sellSel.clear();
+    this.fuseM.onClose = () => (this.fuseSel = []);
+    this.wire();
+  }
+
+  /** Redraws open menus only when their data changed (redrawing under the mouse would swallow clicks). */
+  update(data: MenuData) {
+    // Money ticks every second; only the Trails Shop shows it, so leave it out of the change check elsewhere.
+    const sig = JSON.stringify({ ...data, money: this.trails.isOpen ? data.money : 0 });
+    const changed = sig !== this.sig;
+    this.sig = sig;
+    this.data = data;
+    if (changed) for (const m of [this.shop, this.index, this.sellM, this.fuseM, this.trails]) if (m.isOpen) this.render(m);
+    // The Featured countdown ticks in place.
+    const t = this.shop.isOpen ? this.shop.body.querySelector(".ft-time") : null;
+    if (t) t.textContent = FEATURED.endsAt > Date.now() ? countdown(FEATURED.endsAt - Date.now()) : "Ended";
+  }
+
+  private sig = "";
+
+  open(which: "shop" | "index" | "sell" | "fuse" | "trails") {
+    const m = { shop: this.shop, index: this.index, sell: this.sellM, fuse: this.fuseM, trails: this.trails }[which];
+    m.open();
+    this.render(m);
+  }
+
+  /** Unclaimed Index rewards (red badge on the Index button). */
+  get unclaimed() {
+    const inv = this.data.inv;
+    return inv ? inv.discovered.filter((s) => !inv.claimed.includes(s)).length : 0;
+  }
+
+  // ------------------------------------------------------------------ rendering
+
+  private render(m: Modal) {
+    if (m === this.shop) this.renderShop();
+    else if (m === this.index) this.renderIndex();
+    else if (m === this.sellM) this.renderSell();
+    else if (m === this.fuseM) this.renderFuse();
+    else if (m === this.trails) this.renderTrails();
+  }
+
+  private gemsBadge() {
+    return `<span class="gems-pill">💎 ${formatShort(this.data.inv?.gems ?? 0)}</span>`;
+  }
+
+  private renderShop() {
+    this.shop.headerExtra.innerHTML = this.gemsBadge();
+    const gems = this.data.inv?.gems ?? 0;
+    if (this.shop.tab === "featured") {
+      const egg = EGG_BY_ID.get(FEATURED.eggId)!;
+      const odds = hatchOdds(egg.id)
+        .sort((a, b) => b.pct - a.pct)
+        .map(({ petId, pct }) => {
+          const d = PET_BY_ID.get(petId)!;
+          return `<div class="odd-card${pct <= 2 ? " rare" : ""}" style="--rc:${RARITY_COLOR[d.rarity]}" title="${esc(d.name)} (${d.rarity})"><span>${d.icon}</span><b>${pct}%</b></div>`;
+        })
+        .join("");
+      const left = FEATURED.endsAt - Date.now();
+      this.shop.body.innerHTML = `<div class="shop-title">-- FEATURED --</div>
+        <div class="featured">
+          <div class="ft-top"><span class="ft-new">New!</span><span class="ft-name">${esc(egg.name.toUpperCase())}</span><span class="ft-time">${left > 0 ? countdown(left) : "Ended"}</span></div>
+          <div class="ft-sub">Limited Time! · grows in ${HATCH[egg.id].growSec}s · plant it in your pen</div>
+          <div class="ft-odds">${odds}</div>
+          <div class="ft-buy">${FEATURED.bundles
+            .map(
+              (b) => `<button class="gem-btn${gems >= b.gems && left > 0 ? "" : " no"}" data-buy="featured" data-count="${b.count}">
+                ${"was" in b && b.was ? `<s>💎${b.was}</s>` : ""}💎 ${b.gems}<small>${b.count} Egg${b.count > 1 ? "s" : ""}</small></button>`,
+            )
+            .join("")}</div>
+        </div>
+        <div class="shop-note">💎 Gems come from Index page rewards for now (dev: press K for +100). Real purchases aren't hooked up.</div>`;
+      return;
+    }
+    const items = SHOP_ITEMS.filter((i) => i.tab === this.shop.tab);
+    this.shop.body.innerHTML = `<div class="shop-grid">${items
+      .map(
+        (i) => `<div class="shop-item"><div class="si-icon">${i.icon}</div><div class="si-title">${esc(i.title)}</div>
+          <div class="si-desc">${esc(i.desc)}</div>
+          <button class="gem-btn${gems >= i.gems ? "" : " no"}" data-buy="${i.id}">💎 ${i.gems}</button></div>`,
+      )
+      .join("")}</div>${
+      this.shop.tab === "speed" && (this.data.inv?.boostLeft ?? 0) > 0
+        ? `<div class="shop-note">⚡ x2 Speed active: ${Math.ceil((this.data.inv?.boostLeft ?? 0) / 60)} min left</div>`
+        : ""
+    }`;
+  }
+
+  private renderIndex() {
+    const inv = this.data.inv;
+    const found = new Set(inv?.discovered ?? []);
+    const claimed = new Set(inv?.claimed ?? []);
+    const biome = this.index.tab === "limited" ? "limited" : "forest";
+    const pets = PETS.filter((p) => p.biome === biome);
+    if (!this.indexPet || !pets.some((p) => p.id === this.indexPet)) this.indexPet = pets[0].id;
+    const done = pets.filter((p) => found.has(p.id)).length;
+    const cards = pets
+      .map((p) => {
+        const have = found.has(p.id);
+        const reward = have && !claimed.has(p.id);
+        return `<button class="idx-card${have ? "" : " unknown"}${p.id === this.indexPet ? " sel" : ""}" data-pet="${p.id}" style="--rc:${RARITY_COLOR[p.rarity]}">
+          <span class="ic-name">${have ? esc(p.name) : "???"}</span><span class="ic-icon">${p.icon}</span>${reward ? `<span class="ic-dot">!</span>` : ""}</button>`;
+      })
+      .join("");
+    const sel = PET_BY_ID.get(this.indexPet)!;
+    const have = found.has(sel.id);
+    const r = INDEX_REWARD[sel.rarity];
+    const money = petIncome(sel, sel.baseWeight, "") * r.incomeMult;
+    const canClaim = have && !claimed.has(sel.id);
+    this.index.headerExtra.innerHTML = "";
+    this.index.body.innerHTML = `<div class="idx">
+      <div class="idx-left">
+        <div class="idx-page">${biome === "forest" ? "🌳 Forest" : "⏳ Limited"}</div>
+        <div class="idx-grid">${cards}</div>
+        <div class="idx-bar"><div style="width:${(done / pets.length) * 100}%"></div><span>${done}/${pets.length}</span><em title="Complete the page: +${INDEX_COMPLETE_REWARD.gems} 💎 and +1 pen slot">🎁</em></div>
+      </div>
+      <div class="idx-right">
+        <div class="idx-detail" style="--rc:${RARITY_COLOR[sel.rarity]}">
+          <div class="idd-icon${have ? "" : " unknown"}">${sel.icon}</div>
+          <div class="idd-name">${have ? esc(sel.name) : "???"}</div>
+          <div class="idd-rarity" style="color:${RARITY_COLOR[sel.rarity]}">${sel.rarity}</div>
+          <div class="idd-inc">${have ? `$${formatShort(petIncome(sel, sel.baseWeight, ""))}/s` : "Hatch it to find out"}</div>
+        </div>
+        <div class="idx-rewards"><b>Rewards:</b>
+          <div class="idr-row"><span>💵 $${formatShort(money)}</span><span>👟 +${formatShort(r.speed)}</span></div>
+          <button class="claim-btn" data-claim="${sel.id}" ${canClaim ? "" : "disabled"}>${claimed.has(sel.id) ? "CLAIMED" : "CLAIM!"}</button>
+        </div>
+      </div>
+    </div>
+    <button class="claim-all" data-claim="all" ${this.unclaimed ? "" : "disabled"}>📘 CLAIM ALL (${this.unclaimed})!</button>`;
+  }
+
+  private sellList() {
+    const pets = [...(this.data.inv?.pets ?? [])];
+    return this.sellSort === "weight" ? pets.sort((a, b) => b.weight - a.weight) : pets.sort((a, b) => b.income - a.income);
+  }
+
+  private renderSell() {
+    const pets = this.sellList();
+    for (const uid of [...this.sellSel]) if (!pets.some((p) => p.uid === uid)) this.sellSel.delete(uid);
+    const total = pets.filter((p) => this.sellSel.has(p.uid)).reduce((a, p) => a + p.income * SELL_MULT, 0);
+    this.sellM.body.innerHTML = `<div class="sell">
+      <div class="sell-side">
+        <b>Sort By:</b>
+        <button class="side-btn${this.sellSort === "weight" ? " sel" : ""}" data-sort="weight">Weight</button>
+        <button class="side-btn${this.sellSort === "value" ? " sel" : ""}" data-sort="value">Value</button>
+        <button class="side-btn" data-selall>Select All</button>
+      </div>
+      <div class="card-grid">${pets.length ? pets.map((p) => petCard(p, `<span class="pc-price">$${formatShort(p.income * SELL_MULT)}</span>`, this.sellSel.has(p.uid))).join("") : `<div class="inv-empty">No pets to sell.</div>`}</div>
+    </div>
+    <div class="modal-foot"><span>Total Value: <b>$${formatShort(total)}</b></span><button class="big-go" data-sell ${this.sellSel.size ? "" : "disabled"}>Sell</button></div>`;
+  }
+
+  private renderFuse() {
+    const pets = [...(this.data.inv?.pets ?? [])].sort((a, b) => a.species.localeCompare(b.species) || b.weight - a.weight);
+    this.fuseSel = this.fuseSel.filter((u) => pets.some((p) => p.uid === u));
+    const picked = this.fuseSel.map((u) => pets.find((p) => p.uid === u)!);
+    const species = picked[0]?.species;
+    const slots = Array.from({ length: FUSE.inputs }, (_, i) => {
+      const p = picked[i];
+      return p ? `<div class="fuse-slot full">${PET_BY_ID.get(p.species)!.icon}<small>${p.weight}Kg</small></div>` : `<div class="fuse-slot">+<small>Empty</small></div>`;
+    }).join(`<span class="fuse-pipe"></span>`);
+    const out = picked.length === FUSE.inputs ? +(picked.reduce((a, p) => a + p.weight, 0) * FUSE.weightFactor).toFixed(1) : 0;
+    const eligible = pets.filter((p) => !species || p.species === species);
+    this.fuseM.body.innerHTML = `<div class="fuse-top"><div class="fuse-title">Bring ${FUSE.inputs} same Pets to Fuse</div>
+      <div class="fuse-sub">Better pets give more luck 🍀 (mutations can carry over)</div>
+      <div class="fuse-row">${slots}<span class="fuse-arrow">➜</span><div class="fuse-slot out">${out ? `${PET_BY_ID.get(species!)!.icon}<small>${out}Kg</small>` : "❓"}</div></div></div>
+      <div class="card-grid">${eligible.map((p) => petCard(p, "", this.fuseSel.includes(p.uid))).join("") || `<div class="inv-empty">You need 3 of the same pet.</div>`}</div>
+      <div class="modal-foot"><span>${picked.length < FUSE.inputs ? `${FUSE.inputs - picked.length} Pet${FUSE.inputs - picked.length > 1 ? "s" : ""} Left` : "Ready!"}</span>
+      <button class="big-go" data-fuse ${picked.length === FUSE.inputs ? "" : "disabled"}>Fuse</button></div>`;
+  }
+
+  private renderTrails() {
+    const owned = new Set(this.data.inv?.trailsOwned ?? []);
+    this.trails.headerExtra.innerHTML = `<span class="gems-pill">💵 $${formatShort(this.data.money)}</span>`;
+    this.trails.body.innerHTML = `<div class="trail-row">${TRAILS.map((t) => {
+      const on = this.data.trail === t.id;
+      const btn = on
+        ? `<button class="big-go red" data-trail-eq="">Unequip</button>`
+        : owned.has(t.id)
+          ? `<button class="big-go" data-trail-eq="${t.id}">Equip</button>`
+          : `<button class="big-go${this.data.money >= t.price ? "" : " no"}" data-trail-buy="${t.id}">$${formatShort(t.price)}</button>`;
+      return `<div class="trail-card" style="--tc:${t.color}"><div class="tc-name">${esc(t.name)}</div>
+        <div class="tc-rarity" style="color:${RARITY_COLOR[t.rarity]}">${t.rarity}</div>
+        <div class="tc-art"><span class="tc-streak"></span>🏃</div>
+        <div class="tc-mult">x${t.speedMult} Speed</div>${btn}</div>`;
+    }).join("")}</div>`;
+  }
+
+  // ------------------------------------------------------------------ clicks
+
+  private wire() {
+    this.shop.body.addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest("[data-buy]") as HTMLElement | null;
+      if (b) this.actions.shopBuy(b.dataset.buy!, b.dataset.count ? Number(b.dataset.count) : undefined);
+    });
+    this.index.body.addEventListener("click", (e) => {
+      const t = e.target as HTMLElement;
+      const card = t.closest("[data-pet]") as HTMLElement | null;
+      if (card) {
+        this.indexPet = card.dataset.pet!;
+        return this.renderIndex();
+      }
+      const c = t.closest("[data-claim]") as HTMLButtonElement | null;
+      if (c && !c.disabled) this.actions.claim(c.dataset.claim!);
+    });
+    this.sellM.body.addEventListener("click", (e) => {
+      const t = e.target as HTMLElement;
+      const sort = t.closest("[data-sort]") as HTMLElement | null;
+      if (sort) this.sellSort = sort.dataset.sort as "weight" | "value";
+      else if (t.closest("[data-selall]")) {
+        const all = this.sellList();
+        if (this.sellSel.size === all.length) this.sellSel.clear();
+        else all.forEach((p) => this.sellSel.add(p.uid));
+      } else if (t.closest("[data-sell]")) {
+        if (this.sellSel.size) this.actions.sell([...this.sellSel]);
+        this.sellSel.clear();
+      } else {
+        const card = t.closest("[data-uid]") as HTMLElement | null;
+        if (!card) return;
+        const uid = card.dataset.uid!;
+        if (this.sellSel.has(uid)) this.sellSel.delete(uid);
+        else this.sellSel.add(uid);
+      }
+      this.renderSell();
+    });
+    this.fuseM.body.addEventListener("click", (e) => {
+      const t = e.target as HTMLElement;
+      if (t.closest("[data-fuse]")) {
+        if (this.fuseSel.length === FUSE.inputs) this.actions.fuse(this.fuseSel);
+        this.fuseSel = [];
+      } else {
+        const card = t.closest("[data-uid]") as HTMLElement | null;
+        if (!card) return;
+        const uid = card.dataset.uid!;
+        if (this.fuseSel.includes(uid)) this.fuseSel = this.fuseSel.filter((u) => u !== uid);
+        else if (this.fuseSel.length < FUSE.inputs) this.fuseSel.push(uid);
+      }
+      this.renderFuse();
+    });
+    this.trails.body.addEventListener("click", (e) => {
+      const t = e.target as HTMLElement;
+      const buy = t.closest("[data-trail-buy]") as HTMLElement | null;
+      const eq = t.closest("[data-trail-eq]") as HTMLElement | null;
+      if (buy) this.actions.buyTrail(buy.dataset.trailBuy!);
+      else if (eq) this.actions.equipTrail(eq.dataset.trailEq!);
+    });
+  }
+}

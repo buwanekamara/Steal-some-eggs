@@ -1,0 +1,19 @@
+{
+  "name": "egg-heist",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c yellow,cyan \"npm run dev -w server\" \"npm run dev -w client\"",
+    "typecheck": "tsc -p shared && tsc -p server && tsc -p client",
+    "bots": "npm run bots -w server --",
+    "test:net": "npm run bots -w server -- 2 check"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "typescript": "~5.9.3"
+  }
+}

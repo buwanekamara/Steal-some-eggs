@@ -1,0 +1,193 @@
+{
+  "player": {
+    "file": "player.fbx",
+    "scale": 0.00625,
+    "rotationY": 0,
+    "offsetY": 0,
+    "texture": null,
+    "autoColor": true,
+    "note": "Player character. Texture test.png is missing, so autoColor paints body parts by bone."
+  },
+  "treadmillTier1": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Treadmill level 1 (grey/red, +2/step). Runner faces +Z; belt surface at y = 0.55."
+  },
+  "treadmillTier2": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Treadmill level 2 (silver/green). Runner faces +Z; belt surface at y = 0.55."
+  },
+  "treadmillTier3": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Treadmill level 3 (white/blue, like the reference). Runner faces +Z; belt surface at y = 0.55."
+  },
+  "treadmillTier4": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Treadmill levels 4-5 (gold, looping rail). Runner faces +Z; belt surface at y = 0.55."
+  },
+  "sellStall": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "SELL stall (red/white awning)."
+  },
+  "fuseMachine": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Fuse Machine (blue box with ? screen)."
+  },
+  "trailsShop": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Trails Shop stall (yellow/white awning)."
+  },
+  "leaderboard": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Most Money/s board frame."
+  },
+  "guardian_forest": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Forest guardian (Broody Hen), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "nest": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Egg nest. Eggs sit at y = 0.35."
+  },
+  "egg_forest_speckled": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Speckled Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_forest_mossy": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Mossy Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0."
+  },
+  "egg_forest_acorn": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Acorn Egg (Rare). 1 unit tall at scale 1, bottom at y = 0."
+  },
+  "pet_forest_chick": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Chick (Common). About 1.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_forest_bunny": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Bunny (Common). About 2.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_forest_piglet": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Piglet (Uncommon). About 2.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_forest_fox": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Fox (Uncommon). About 2.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_forest_owl": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Burrowing Owl (Rare). About 3.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_forest_bear": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Bear (Epic). About 4.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_forest_stag": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Stag (Legendary). About 5.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_forest_spirit": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Forest Spirit (Mythic). About 4.5 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "egg_limited_nugget": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Golden Nugget Egg (Shop Featured, limited). 1 unit tall at scale 1, bottom at y = 0."
+  },
+  "pet_limited_goldhen": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Golden Hen (Rare, limited). About 2.6 units tall at its base weight, faces +Z. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1) animate automatically."
+  },
+  "pet_limited_luckycat": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Lucky Cat (Epic, limited). About 2.6 units tall at its base weight, faces +Z. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1) animate automatically."
+  },
+  "pet_limited_crystaldeer": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Crystal Deer (Legendary, limited). About 4.6 units tall at its base weight, faces +Z. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1) animate automatically."
+  },
+  "pet_limited_nuggetking": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Nugget King (Mythic, limited). About 5 units tall at its base weight, faces +Z. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1) animate automatically."
+  }
+}
