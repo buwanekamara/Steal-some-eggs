@@ -137,12 +137,12 @@ export function groundHeightAt(x: number, z: number): number {
 // ---------------------------------------------------------------- shared hub buildings
 
 export const HUB_BUILDINGS = {
-  sell: { x: -60, z: -18, label: "SELL" },
-  fuse: { x: -30, z: -18, label: "Fuse Machine" },
+  sell: { x: -60, z: -9, label: "SELL" },
+  fuse: { x: -30, z: -9, label: "Fuse Machine" },
   potion: { x: 0, z: -18, label: "POTION" },
-  trails: { x: 30, z: -18, label: "TRAILS SHOP" },
-  leaderboard: { x: 60, z: -18, label: "MOST MONEY/s" },
-  chest: { x: 90, z: -18, label: "FREE CHEST" },
+  trails: { x: 30, z: -9, label: "TRAILS SHOP" },
+  leaderboard: { x: 60, z: -10, label: "MOST MONEY/s" },
+  chest: { x: 45.5, z: -9.5, label: "FREE CHEST" },
 } as const;
 
 /** Where players stand to use a hub building: in front of it (buildings face the bases, -Z). */

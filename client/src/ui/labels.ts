@@ -17,6 +17,8 @@ export interface LabelOptions {
   fixedSize?: boolean;
   /** Draw on top of scene geometry. */
   alwaysOnTop?: boolean;
+  /** Called after every redraw (text changed or web font arrived). */
+  onRedraw?: () => void;
 }
 
 /**
@@ -75,7 +77,7 @@ export class TextLabel extends THREE.Sprite {
     for (let i = 0; i < this.lines.length; i++) {
       const l = this.lines[i];
       g.font = `700 ${sizes[i]}px ${FONT}`;
-      g.lineWidth = sizes[i] * 0.16;
+      g.lineWidth = sizes[i] * 0.06;
       g.strokeStyle = this.opts.outline ?? "#1b1b1b";
       g.strokeText(l.text, this.canvas.width / 2, y);
       g.fillStyle = l.color ?? "#ffffff";
@@ -91,11 +93,44 @@ export class TextLabel extends THREE.Sprite {
     // Fixed-size sprites are measured in screen-height fractions (≈1.4 = full height at fov 70).
     const unit = this.opts.fixedSize ? 0.0007 : (this.opts.lineHeight ?? 0.6) / px;
     this.scale.set(this.canvas.width * unit, this.canvas.height * unit, 1);
+    this.opts.onRedraw?.();
   }
 
   dispose() {
     this.tex.dispose();
     (this.material as THREE.SpriteMaterial).dispose();
+  }
+}
+
+/**
+ * Same outlined text as TextLabel, but printed flat on a sign board instead of billboarding:
+ * a front plane (+z) and a back plane (-z, `backOffset` behind it) so the text reads from both sides.
+ */
+export class PlaneLabel extends THREE.Group {
+  private src: TextLabel | null = null;
+  private front = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
+  private back: THREE.Mesh;
+
+  constructor(opts: LabelOptions = {}, backOffset = 0.26) {
+    super();
+    this.back = new THREE.Mesh(this.front.geometry, this.front.material);
+    this.back.rotation.y = Math.PI;
+    this.back.position.z = -backOffset;
+    this.add(this.front, this.back);
+    this.src = new TextLabel("", { ...opts, onRedraw: () => this.sync() });
+    this.sync();
+  }
+
+  setLines(lines: LabelLine[] | string) {
+    this.src?.setLines(lines);
+  }
+
+  private sync() {
+    if (!this.src) return;
+    const mat = this.front.material as THREE.MeshBasicMaterial;
+    mat.map = (this.src.material as THREE.SpriteMaterial).map;
+    mat.needsUpdate = true;
+    for (const m of [this.front, this.back]) m.scale.set(this.src.scale.x, this.src.scale.y, 1);
   }
 }
 
@@ -113,7 +148,7 @@ export function textPlane(text: string, widthUnits: number, color = "#ffffff", o
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.lineJoin = "round";
-    g.lineWidth = px * 0.14;
+    g.lineWidth = px * 0.05;
     g.strokeStyle = outline;
     g.strokeText(text, c.width / 2, c.height / 2);
     g.fillStyle = color;

@@ -10,8 +10,47 @@ import { beltTexture, eggShellTexture, propTexture, questionTexture } from "./te
 const mat = (color: string, opts: THREE.MeshStandardMaterialParameters = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness: 0.75, map: propTexture(), ...opts });
 
+const mesh = (geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number) => {
+  const o = new THREE.Mesh(geo, m);
+  o.castShadow = o.receiveShadow = true;
+  o.position.set(x, y, z);
+  return o;
+};
+
+/** World units covered by one repeat of the stud texture. */
+const STUD_TILE = 2;
+
+/** Scales a box's UVs by its real face sizes so studs stay square instead of stretching over big faces. */
+function tileUVs(geo: THREE.BoxGeometry, w: number, h: number, d: number) {
+  const uv = geo.getAttribute("uv") as THREE.BufferAttribute;
+  // BoxGeometry face order: +x, -x, +y, -y, +z, -z (4 vertices each); [u size, v size] per face.
+  const faces = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+  faces.forEach(([fu, fv], f) => {
+    for (let i = f * 4; i < f * 4 + 4; i++) uv.setXY(i, (uv.getX(i) * fu) / STUD_TILE, (uv.getY(i) * fv) / STUD_TILE);
+  });
+  uv.needsUpdate = true;
+}
+
+/** Extrudes a 2D outline (in the XY plane, points as [x, y]) into a slanted/curved solid centred on z. */
+function prism(pts: [number, number][], depth: number, material: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+  const shape = new THREE.Shape(pts.map(([px, py]) => new THREE.Vector2(px, py)));
+  return extrudeShape(shape, depth, material, x, y, z);
+}
+
+function extrudeShape(shape: THREE.Shape, depth: number, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
+  const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: 20 });
+  geo.translate(0, 0, -depth / 2);
+  const uv = geo.getAttribute("uv") as THREE.BufferAttribute;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) / STUD_TILE, uv.getY(i) / STUD_TILE);
+  const m = shaded(new THREE.Mesh(geo, material));
+  m.position.set(x, y, z);
+  return m;
+}
+
 function box(w: number, h: number, d: number, color: string | THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), typeof color === "string" ? mat(color) : color);
+  const geo = new THREE.BoxGeometry(w, h, d);
+  tileUVs(geo, w, h, d);
+  const m = new THREE.Mesh(geo, typeof color === "string" ? mat(color) : color);
   m.position.set(x, y, z);
   m.castShadow = true;
   m.receiveShadow = true;
@@ -68,7 +107,7 @@ function player(): THREE.Object3D {
 export type TreadmillTier = 1 | 2 | 3 | 4;
 
 const TREADMILL_TIERS: Record<TreadmillTier, { frame: string; accent: string; belt: string; glow: string; loop: boolean }> = {
-  1: { frame: "#9196a3", accent: "#e0344a", belt: "#20242c", glow: "#ff4d4d", loop: false },
+  1: { frame: "#2f6fd6", accent: "#4f95f0", belt: "#2a2d36", glow: "#5fe8ff", loop: false },
   2: { frame: "#c9cdd6", accent: "#3ad16a", belt: "#1d2229", glow: "#7dffa8", loop: false },
   3: { frame: "#f4f7fb", accent: "#2f9bff", belt: "#182430", glow: "#7fd4ff", loop: false },
   4: { frame: "#f2b632", accent: "#ffdf80", belt: "#15181f", glow: "#39e6ff", loop: true },
@@ -80,9 +119,11 @@ function treadmill(tier: TreadmillTier = 1): THREE.Object3D {
   const frameMat = mat(p.frame, { roughness: 0.35, metalness: 0.4 });
   const accentMat = mat(p.accent, { roughness: 0.3, metalness: 0.15, emissive: p.accent, emissiveIntensity: 0.12 });
 
-  // Deck with a slightly raised lip so the belt reads as recessed.
-  g.add(box(2.5, 0.42, 5.2, frameMat, 0, 0.21, 0));
-  g.add(box(2.62, 0.14, 5.32, mat("#1c1f26", { roughness: 0.5 }), 0, 0.47, 0));
+  // Low base with two side beams, so the belt sits recessed between them.
+  g.add(box(2.5, 0.3, 5.2, frameMat, 0, 0.15, 0));
+  for (const side of [-1, 1]) g.add(box(0.3, 0.45, 5.2, frameMat, side * 1.1, 0.325, 0));
+  g.add(box(2.5, 0.45, 0.4, frameMat, 0, 0.325, -2.4));
+  g.add(box(2.5, 0.45, 0.4, frameMat, 0, 0.325, 2.4));
 
   const belt = shaded(
     new THREE.Mesh(
@@ -94,24 +135,15 @@ function treadmill(tier: TreadmillTier = 1): THREE.Object3D {
   belt.position.set(0, 0.55, 0);
   g.add(belt);
 
-  // Rear roller (visible below the belt's far end) and front wheel hub.
-  const roller = shaded(
-    new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 2.1, 12), mat("#2b2e36", { metalness: 0.5, roughness: 0.4 })),
-  );
-  roller.rotation.z = Math.PI / 2;
-  roller.position.set(0, 0.4, -2.55);
-  g.add(roller);
-
+  // Each side: a slanted upright at the front and two handrails running back from it.
+  const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   for (const side of [-1, 1]) {
-    g.add(box(0.24, 2.1, 0.24, frameMat, side * 1.15, 1.26, 2.15));
-    g.add(box(0.22, 0.22, 3.1, accentMat, side * 1.15, 1.36, 0.6));
+    const x = side * 1.1;
+    g.add(beam(V(x, 0.5, 1.7), V(x, 2.1, 2.25), 0.24, frameMat));
+    g.add(beam(V(x, 2.05, 2.25), V(x, 2.05, -0.4), 0.17, accentMat));
+    g.add(beam(V(x, 1.35, 1.95), V(x, 1.35, 0.4), 0.17, accentMat));
+    g.add(beam(V(x, 2.05, -0.4), V(x, 1.35, 0.4), 0.14, accentMat));
   }
-
-  // Console bar with a glowing display, facing the runner.
-  g.add(box(2.6, 0.34, 0.55, accentMat, 0, 2.35, 2.15));
-  g.add(
-    box(0.95, 0.52, 0.1, new THREE.MeshStandardMaterial({ color: "#0e1116", emissive: p.glow, emissiveIntensity: 0.55 }), 0, 2.05, 2.46),
-  );
 
   if (p.loop) {
     // Tier 4: a tall looping arch of rail over the deck, like the reference gold treadmill.
@@ -129,15 +161,15 @@ function treadmill(tier: TreadmillTier = 1): THREE.Object3D {
 /** Market stall: posts (shorter at the back for a lean-to roof), a striped awning, a trimmed counter. */
 function stall(awningA: string, awningB: string, counter: string, roof: string): THREE.Object3D {
   const g = new THREE.Group();
-  const postMat = mat("#4a4a55", { roughness: 0.6, metalness: 0.15 });
+  const postMat = mat("#4a4a55", { roughness: 0.6, metalness: 0.15, map: null });
   const FRONT_POST_H = 3.4;
-  const BACK_POST_H = 2.9;
+  const BACK_POST_H = 3.02; // reaches the underside of the sloping awning
   for (const x of [-2.4, 2.4]) {
     g.add(box(0.25, FRONT_POST_H, 0.25, postMat, x, FRONT_POST_H / 2, 1.4));
     g.add(box(0.25, BACK_POST_H, 0.25, postMat, x, BACK_POST_H / 2, -1.4));
   }
   // Diagonal brace along the left side so it doesn't read as floating posts.
-  const braceMat = mat("#3a3a44", { roughness: 0.7 });
+  const braceMat = mat("#3a3a44", { roughness: 0.7, map: null });
   g.add(beam(new THREE.Vector3(-2.4, FRONT_POST_H * 0.82, 1.4), new THREE.Vector3(-2.4, BACK_POST_H * 0.82, -1.4), 0.16, braceMat));
 
   g.add(box(5, 1.1, 1, mat(counter, { roughness: 0.75 }), 0, 0.55, 1.2));
@@ -148,65 +180,219 @@ function stall(awningA: string, awningB: string, counter: string, roof: string):
     s.rotation.x = -0.14;
     g.add(s);
   }
-  g.add(box(5.3, 0.22, 0.5, mat(roof, { roughness: 0.4 }), 0, 3.55, -1.55));
+  // Back trim sits on the awning's rear edge (it slopes down toward the back).
+  const trim = box(5.3, 0.22, 0.5, mat(roof, { roughness: 0.4 }), 0, 3.1, -1.7);
+  trim.rotation.x = -0.14;
+  g.add(trim);
   return g;
 }
 
-/** Small treasure chest, sat on a stall counter for the trails shop. */
+/** SELL stall: four slim posts, a red/white striped canopy, and a counter with a plank top over two open slats. */
+function sellStall(): THREE.Object3D {
+  const g = new THREE.Group();
+  // No stud map on the long thin parts: the box UVs would stretch it into streaks.
+  const post = mat("#6f6a7a", { roughness: 0.6, metalness: 0.1, map: null });
+  const slat = mat("#645e70", { roughness: 0.65, map: null });
+  const HALF_W = 2.4;
+  const FRONT_H = 3.4;
+  const BACK_H = 3.25; // meets the canopy frame, which slopes down toward the back
+  for (const x of [-HALF_W, HALF_W]) {
+    g.add(box(0.26, FRONT_H, 0.26, post, x, FRONT_H / 2, 1.3));
+    g.add(box(0.26, BACK_H, 0.26, post, x, BACK_H / 2, -1.3));
+  }
+  // Counter: overhanging plank top, then two slats resting against the front posts (no gaps).
+  g.add(box(5.2, 0.14, 1.1, mat("#7d8298", { roughness: 0.6 }), 0, 1.2, 1.3));
+  for (const [y, h, tilt] of [[1.0, 0.3, 0.012], [0.52, 0.34, -0.015]] as const) {
+    const s = box(4.7, h, 0.12, slat, 0, y, 1.42);
+    s.rotation.z = tilt;
+    g.add(s);
+  }
+  // Side rails tie the counter to the back posts.
+  for (const x of [-HALF_W, HALF_W]) g.add(box(0.12, 0.3, 2.6, slat, x, 1.0, 0));
+  // Striped canopy, sloping down toward the back, with a thin frame underneath.
+  const stripes = 8;
+  const w = 5.5 / stripes;
+  for (let i = 0; i < stripes; i++) {
+    const s = box(w, 0.16, 3.7, i % 2 ? "#ffffff" : "#e53935", -2.75 + w / 2 + i * w, 3.42, 0);
+    s.rotation.x = -0.1;
+    g.add(s);
+  }
+  const frame = box(5.5, 0.1, 3.7, post, 0, 3.3, 0);
+  frame.rotation.x = -0.1;
+  g.add(frame);
+  return g;
+}
+
+/** Free Chest: a big red treasure chest with gold trim, an arched lid, spikes, a green gem and a keyhole plate. */
 function chest(): THREE.Object3D {
   const g = new THREE.Group();
-  g.add(box(1.3, 0.8, 0.9, mat("#8a5a33", { roughness: 0.7 }), 0, 0.4, 0));
-  const lid = box(1.36, 0.4, 0.96, mat("#a9713f", { roughness: 0.6 }), 0, 0.98, 0);
-  lid.rotation.x = -0.12;
+  const red = mat("#d32a1c", { roughness: 0.4, map: null });
+  const gold = mat("#ffc928", { roughness: 0.35, metalness: 0.3, emissive: "#ffb300", emissiveIntensity: 0.18 });
+  const orange = mat("#f0a020", { roughness: 0.5 });
+  const gem = new THREE.MeshStandardMaterial({ color: "#2fe07a", emissive: "#1fd060", emissiveIntensity: 0.8, roughness: 0.2 });
+  const dark = new THREE.MeshStandardMaterial({ color: "#0d0d10", roughness: 0.8 });
+  const at = <T extends THREE.Object3D>(o: T, x: number, y: number, z: number) => (o.position.set(x, y, z), o);
+
+  // Two-step orange plinth.
+  g.add(box(5, 0.3, 3.8, orange, 0, 0.15, 0));
+  g.add(box(4.6, 0.25, 3.4, gold, 0, 0.42, 0));
+
+  // Body: red panels leaning out toward the top, with gold corner posts and a gold rim.
+  g.add(prism([[-2, 0], [2, 0], [2.1, 1.5], [-2.1, 1.5]], 2.8, red, 0, 0.55, 0));
+  for (const x of [-2.05, 2.05]) for (const z of [-1.4, 1.4]) g.add(box(0.4, 1.6, 0.4, gold, x, 1.35, z));
+  g.add(box(0.4, 1.5, 0.15, gold, -0.85, 1.3, 1.45));
+  g.add(box(0.4, 1.5, 0.15, gold, 0.85, 1.3, 1.45));
+  g.add(box(4.5, 0.32, 3.3, gold, 0, 2.15, 0));
+
+  // Arched lid: side profile extruded across the width, with three gold bands over it.
+  const profile = (grow: number): [number, number][] => [
+    [-1.65 - grow, 0], [1.65 + grow, 0], [1.3 + grow, 0.65 + grow], [0.6, 1.05 + grow], [-0.6, 1.05 + grow], [-1.3 - grow, 0.65 + grow],
+  ];
+  const lid = prism(profile(0), 4.2, red, 0, 2.3, 0);
+  lid.rotation.y = Math.PI / 2;
   g.add(lid);
-  g.add(box(0.32, 0.28, 0.12, mat("#f2c94c", { metalness: 0.6, roughness: 0.25, emissive: "#f2c94c", emissiveIntensity: 0.15 }), 0, 0.7, 0.46));
+  for (const x of [-1.9, 0, 1.9]) {
+    const band = prism(profile(0.08), 0.42, gold, x, 2.3, 0);
+    band.rotation.y = Math.PI / 2;
+    g.add(band);
+  }
+
+  // Green gem in a gold setting on the centre band, and the keyhole plate on the front.
+  const gemRing = mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.16, 8), gold, 0, 3.05, 0.98);
+  gemRing.rotation.x = Math.PI / 2 - 0.6;
+  g.add(gemRing);
+  const gemStone = mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.2, 8), gem, 0, 3.08, 1.03);
+  gemStone.rotation.x = Math.PI / 2 - 0.6;
+  g.add(gemStone);
+  g.add(box(1.1, 1.0, 0.18, gold, 0, 1.75, 1.5));
+  const hole = mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.06, 12), dark, 0, 1.9, 1.6);
+  hole.rotation.x = Math.PI / 2;
+  g.add(hole);
+  g.add(box(0.12, 0.34, 0.06, dark, 0, 1.6, 1.6));
+
+  // Gold spikes on the lid corners and body sides.
+  const spike = (x: number, y: number, z: number, rx: number, rz: number) => {
+    const m = mesh(new THREE.ConeGeometry(0.14, 0.42, 8), gold, x, y, z);
+    m.rotation.set(rx, 0, rz);
+    g.add(m);
+  };
+  for (const x of [-2.1, 2.1]) {
+    spike(x, 2.95, 1.0, 0.5, x > 0 ? -0.25 : 0.25);
+    spike(x, 2.95, -1.0, -0.5, x > 0 ? -0.25 : 0.25);
+    spike(x * 1.05, 1.2, 0.55, 0, x > 0 ? -Math.PI / 2 : Math.PI / 2);
+  }
   return g;
 }
 
 function fuseMachine(): THREE.Object3D {
+  const root = new THREE.Group();
   const g = new THREE.Group();
-  const body = mat("#2f5fd6", { roughness: 0.4, metalness: 0.25 });
-  const trim = mat("#3c3f4a", { roughness: 0.55, metalness: 0.3 });
-  g.add(box(5, 3.6, 3, body, 0, 1.9, 0));
-  g.add(box(5.4, 0.6, 3.4, trim, 0, 0.3, 0));
-  g.add(box(5.4, 0.5, 3.4, mat("#22252d", { roughness: 0.5 }), 0, 3.95, 0));
-  g.add(box(1.9, 1, 1.9, mat("#22252d", { roughness: 0.5 }), 0, 4.7, -0.3));
+  g.position.x = -1.6; // puts the gate's centre near the stand-here pad
+  root.add(g);
+  const blue = mat("#2b45c0", { roughness: 0.4, metalness: 0.15 });
+  const deepBlue = mat("#1f3196", { roughness: 0.45 });
+  const wedge = mat("#6b7290", { roughness: 0.55 });
+  const stone = mat("#5a6072", { roughness: 0.6 });
+  const slate = mat("#2c3350", { roughness: 0.45, metalness: 0.3, map: null });
+  const console_ = mat("#3a3f52", { roughness: 0.5, metalness: 0.25 });
+  const cyan = new THREE.MeshStandardMaterial({ color: "#d8f8ff", emissive: "#39d8ff", emissiveIntensity: 1.8, roughness: 0.3 });
+  const red = new THREE.MeshStandardMaterial({ color: "#ff6a6a", emissive: "#ff2a2a", emissiveIntensity: 1.5, roughness: 0.4 });
+  const white = new THREE.MeshStandardMaterial({ color: "#ffffff", emissive: "#e6f8ff", emissiveIntensity: 1.5, roughness: 0.3 });
+  const at = <T extends THREE.Object3D>(o: T, x: number, y: number, z: number) => (o.position.set(x, y, z), o);
 
-  for (const x of [-1.5, 0.1]) {
-    const stack = shaded(new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.38, 1.1, 10), trim));
-    stack.position.set(x, 5.4, -0.5);
-    g.add(stack);
-  }
-  const pipe = shaded(new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.12, 6, 16, Math.PI), trim));
-  pipe.rotation.set(0, Math.PI / 2, 0);
-  pipe.position.set(-2.15, 3.3, 0);
-  g.add(pipe);
+  // Stepped stone base with a wide step in front of the gate.
+  g.add(box(9.6, 0.3, 5.4, stone, 0, 0.15, -0.6)); // extends back under the rear block
+  g.add(box(5.4, 0.2, 0.7, stone, 2.2, 0.1, 2.45));
 
-  // Mystery-egg screen (front) and an energy meter strip beside it.
-  g.add(
-    box(
-      2.3,
-      2.15,
-      0.15,
-      new THREE.MeshStandardMaterial({ map: questionTexture(), emissive: "#5ec8f0", emissiveIntensity: 0.45, roughness: 0.35 }),
-      0.9,
-      2.15,
-      1.58,
-    ),
+  // Machine body behind the control station.
+  g.add(box(4.2, 2.8, 1.8, deepBlue, -2.7, 1.7, -0.6));
+
+  // Solid rear block behind the gate, carrying the dome (no see-through gap under it).
+  g.add(box(5.9, 4.7, 2.2, blue, 2.2, 2.65, -1.7));
+
+  // Gate: two pillars and a lintel with a sloped grey cap, around a glowing "?" doorway.
+  for (const x of [-0.25, 4.65]) g.add(box(1.0, 4.1, 1.5, blue, x, 2.35, 0));
+  g.add(box(5.9, 1.0, 1.6, blue, 2.2, 4.15, 0));
+  g.add(prism([[-3.1, 0], [3.1, 0], [2.3, 0.65], [-2.3, 0.65]], 1.7, wedge, 2.2, 4.65, 0));
+  g.add(box(3.9, 3.7, 0.15, new THREE.MeshStandardMaterial({ map: questionTexture(), emissive: "#9fe8ff", emissiveIntensity: 1.3, roughness: 0.3 }), 2.2, 2.15, 0.35));
+
+  // Dark dome behind the gate: stacked drum, cap, and a glowing cyan screen.
+  g.add(mesh(new THREE.CylinderGeometry(2.0, 2.2, 1.4, 28), slate, 2.2, 5.7, -0.7));
+  g.add(mesh(new THREE.CylinderGeometry(1.5, 1.9, 0.6, 28), slate, 2.2, 6.7, -0.7));
+  g.add(mesh(new THREE.SphereGeometry(1.5, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), slate, 2.2, 7.0, -0.7));
+  const screen = box(1.7, 0.85, 0.1, cyan, 2.2, 5.9, 1.25);
+  screen.rotation.x = -0.12;
+  g.add(screen);
+
+  // Curved dark pipe arching from the dome down to the machine body.
+  // Both ends sink into the body top and the dome's side so nothing floats.
+  const pipeCurve = new THREE.CubicBezierCurve3(
+    new THREE.Vector3(-2.4, 2.7, -0.7),
+    new THREE.Vector3(-2.4, 6.0, -0.7),
+    new THREE.Vector3(-1.4, 6.0, -0.7),
+    new THREE.Vector3(0.4, 5.6, -0.7),
   );
-  g.add(box(0.5, 1.7, 0.15, mat("#e0344a", { emissive: "#ff5a68", emissiveIntensity: 0.6, roughness: 0.4 }), -1.8, 1.55, 1.58));
-  for (let i = 0; i < 3; i++) g.add(box(0.3, 0.24, 0.05, "#ffffff", -1.8, 0.95 + i * 0.4, 1.66));
-  return g;
+  g.add(mesh(new THREE.TubeGeometry(pipeCurve, 32, 0.32, 10), slate, 0, 0, 0));
+
+  // Control station: console with a star screen, joystick, red button box and heart lights.
+  g.add(box(2.2, 1.4, 1.4, console_, -3.6, 1.0, 0.7));
+  // The star panel stands on the console (console top is y 1.7).
+  const panel = box(1.5, 1.5, 0.25, mat("#1a2038", { roughness: 0.5 }), -3.7, 2.45, 0.5);
+  panel.rotation.y = 0.3;
+  g.add(panel);
+  const star = new THREE.Shape();
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? 0.14 : 0.34;
+    const ang = Math.PI / 2 + (i * Math.PI) / 5;
+    const px = Math.cos(ang) * r;
+    const py = Math.sin(ang) * r;
+    if (i) star.lineTo(px, py);
+    else star.moveTo(px, py);
+  }
+  star.closePath();
+  const bigStar = extrudeShape(star, 0.1, white, -3.7, 2.6, 0.7);
+  bigStar.rotation.y = 0.3;
+  g.add(bigStar);
+  g.add(box(1.7, 0.28, 0.12, cyan, -2.6, 2.45, 0.5));
+  g.add(box(0.8, 0.5, 0.8, console_, -4.1, 1.95, 1.0));
+  const stick = mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.1, 8), slate, -4.1, 2.5, 1.0);
+  stick.rotation.z = 0.25;
+  g.add(stick);
+  g.add(mesh(new THREE.SphereGeometry(0.2, 12, 10), red, -4.0 - 0.3, 3.0, 1.0));
+  g.add(box(1.4, 0.7, 1.0, console_, -2.5, 0.65, 1.4));
+  g.add(box(0.7, 0.1, 0.4, red, -2.5, 1.05, 1.45));
+  g.add(box(0.8, 1.6, 0.4, console_, -1.7, 2.3, 0.5));
+  for (const y of [1.95, 2.55]) g.add(box(0.4, 0.4, 0.1, red, -1.7, y, 0.72));
+  for (const x of [-4.6, -4.2]) g.add(mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.2, 8), slate, x, 4.1, -0.2));
+  return root;
 }
 
 function leaderboard(): THREE.Object3D {
   const g = new THREE.Group();
-  const frame = mat("#2a72c9", { roughness: 0.4, metalness: 0.2 });
-  g.add(box(6.4, 8.4, 0.6, frame, 0, 5, 0));
-  g.add(box(5.4, 7.2, 0.1, new THREE.MeshStandardMaterial({ color: "#111418" }), 0, 5, 0.32));
-  g.add(box(6.8, 0.8, 1.4, frame, 0, 0.4, 0));
-  g.add(box(6.8, 0.5, 1, mat("#1f5aa8", { roughness: 0.45 }), 0, 9.35, 0));
-  for (const x of [-3.35, 3.35]) g.add(box(0.4, 8.4, 0.4, mat("#1f5aa8", { roughness: 0.45 }), x, 5, 0));
+  const blue = mat("#1e9be8", { roughness: 0.45 });
+  const deep = mat("#1479cc", { roughness: 0.45 });
+  const light = mat("#a6def7", { roughness: 0.5 });
+  const face = mat("#c4ecfc", { roughness: 0.5 });
+
+  // Plinth with sloped sides, and a rounded dome-shaped stem that holds the board up.
+  g.add(prism([[-4, 0], [4, 0], [3.5, 0.6], [-3.5, 0.6]], 2.2, light));
+  const dome = new THREE.Shape();
+  dome.moveTo(-1.9, 0);
+  dome.absarc(0, 0, 1.9, Math.PI, 0, true);
+  g.add(extrudeShape(dome, 0.9, deep, 0, 0.6, 0));
+
+  // Board: blue frame, side pillars that flare out at the foot, black screen set slightly in.
+  g.add(box(6.8, 7.6, 0.8, blue, 0, 5.0, 0));
+  for (const side of [-1, 1]) {
+    g.add(prism([[side * 2.75, 0], [side * 3.75, 0], [side * 3.5, 7.4], [side * 2.75, 7.4]].map(([px, py]) => [px, py] as [number, number]), 1.0, light, 0, 1.3, 0));
+  }
+  g.add(box(6.8, 0.6, 1.0, light, 0, 1.6, 0));
+  g.add(box(5.2, 6.4, 0.1, new THREE.MeshStandardMaterial({ color: "#0b0d12", roughness: 0.6 }), 0, 4.9, 0.42));
+
+  // Header: a trapezoid cap that widens toward the top edge's corners, pale title plate, raised sloped crest.
+  g.add(prism([[-4, 0], [4, 0], [3.5, 1.5], [-3.5, 1.5]], 1.1, blue, 0, 8.6, 0));
+  g.add(prism([[-3.4, 0.2], [3.4, 0.2], [3.1, 1.25], [-3.1, 1.25]], 0.12, face, 0, 8.6, 0.58));
+  g.add(prism([[-2.6, 0], [2.6, 0], [1.9, 0.7], [-1.9, 0.7]], 0.9, deep, 0, 10.1, 0));
   return g;
 }
 
@@ -241,6 +427,57 @@ function trap(): THREE.Object3D {
   return g;
 }
 
+/** Potion pickup: a round glass flask of glowing purple liquid with a cork and a rope. World.update bobs and pulses it. */
+function potion(): THREE.Object3D {
+  const root = new THREE.Group();
+  const g = new THREE.Group();
+  g.rotation.z = -0.3;
+  g.position.y = 1.6;
+  root.add(g);
+  const glass = new THREE.MeshStandardMaterial({ color: "#e4d0ff", roughness: 0.08, transparent: true, opacity: 0.32, depthWrite: false });
+  const liquid = new THREE.MeshStandardMaterial({ color: "#8a2be2", emissive: "#a63cff", emissiveIntensity: 0.9, roughness: 0.3 });
+  const foam = new THREE.MeshStandardMaterial({ color: "#f3e8ff", emissive: "#ffffff", emissiveIntensity: 0.7, roughness: 0.4 });
+  const cork = new THREE.MeshStandardMaterial({ color: "#b5793a", roughness: 0.9 });
+  const rope = new THREE.MeshStandardMaterial({ color: "#8a6a45", roughness: 0.95 });
+  const halo = new THREE.MeshBasicMaterial({ color: "#b04dff", transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide });
+  // The world pulses anything flagged here while the potion is on the ground.
+  liquid.userData.pulse = { base: 0.9, amp: 0.5 };
+  foam.userData.pulse = { base: 0.7, amp: 0.4 };
+  halo.userData.haloPulse = { base: 0.25, amp: 0.12 };
+
+  const R = 1.0;
+  g.add(mesh(new THREE.SphereGeometry(R, 32, 20), glass, 0, 0, 0));
+  // Liquid fills the lower part of the flask; a pale foam disc caps it at the surface.
+  const level = 0.35;
+  g.add(mesh(new THREE.SphereGeometry(R * 0.9, 32, 20, 0, Math.PI * 2, Math.PI * level, Math.PI * (1 - level)), liquid, 0, 0, 0));
+  const surfaceY = Math.cos(Math.PI * level) * R * 0.9;
+  const cap = mesh(new THREE.CircleGeometry(Math.sin(Math.PI * level) * R * 0.9, 28), foam, 0, surfaceY, 0);
+  cap.rotation.x = -Math.PI / 2;
+  g.add(cap);
+  for (const [x, y, z, r] of [[-0.3, -0.2, 0.5, 0.07], [0.35, -0.4, 0.4, 0.05], [0.0, -0.6, 0.6, 0.06], [-0.5, -0.5, 0.2, 0.05], [0.5, -0.1, 0.3, 0.04]] as const)
+    g.add(mesh(new THREE.SphereGeometry(r, 8, 6), foam, x, y, z));
+
+  // Neck, lip, cork and a rope tied around the neck with a loose end hanging down the side.
+  g.add(mesh(new THREE.CylinderGeometry(0.3, 0.32, 0.8, 16), glass, 0, R + 0.25, 0));
+  const lip = mesh(new THREE.TorusGeometry(0.34, 0.07, 8, 20), glass, 0, R + 0.62, 0);
+  lip.rotation.x = Math.PI / 2;
+  g.add(lip);
+  g.add(mesh(new THREE.CylinderGeometry(0.3, 0.26, 0.4, 14), cork, 0, R + 0.85, 0));
+  const tie = mesh(new THREE.TorusGeometry(0.34, 0.06, 8, 20), rope, 0, R + 0.2, 0);
+  tie.rotation.x = Math.PI / 2;
+  g.add(tie);
+  const tail = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0.3, R + 0.2, 0.15),
+    new THREE.Vector3(0.75, R - 0.2, 0.35),
+    new THREE.Vector3(0.95, 0.1, 0.35),
+    new THREE.Vector3(0.9, -0.5, 0.2),
+  ]);
+  g.add(mesh(new THREE.TubeGeometry(tail, 20, 0.05, 6), rope, 0, 0, 0));
+
+  g.add(mesh(new THREE.SphereGeometry(R * 1.45, 24, 16), halo, 0, 0, 0));
+  return root;
+}
+
 function unknown(): THREE.Object3D {
   const g = new THREE.Group();
   g.add(box(1.5, 1.5, 1.5, "#ff2bd6", 0, 0.75, 0));
@@ -250,6 +487,7 @@ function unknown(): THREE.Object3D {
 function trailsShop(): THREE.Object3D {
   const g = stall("#ffd21f", "#ffffff", "#8a5a33", "#d9a80f");
   const c = chest();
+  c.scale.setScalar(0.32);
   c.position.set(0, 1.2, 1.2);
   g.add(c);
   return g;
@@ -469,9 +707,11 @@ export const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
   treadmillTier2: () => treadmill(2),
   treadmillTier3: () => treadmill(3),
   treadmillTier4: () => treadmill(4),
-  sellStall: () => stall("#e53935", "#ffffff", "#6b6f7a", "#b32d26"),
+  sellStall,
   trailsShop,
   fuseMachine,
+  chest,
+  potionPickup: potion,
   leaderboard,
   bat,
   trap,

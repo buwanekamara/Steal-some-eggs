@@ -12,6 +12,8 @@ interface StudOptions {
   checker: number;
   /** Brightness of the darker checker cells (0..1). */
   checkerDark: number;
+  /** Multiplier for the dark stud outlines' opacity (default 1). */
+  outline?: number;
 }
 
 const cache = new Map<string, THREE.CanvasTexture>();
@@ -36,6 +38,7 @@ function drawStuds(opts: StudOptions): HTMLCanvasElement {
   const step = size / opts.studs;
   const s = step * 0.56;
   const r = step * 0.12;
+  const k = opts.outline ?? 1;
   const roundRect = (x: number, y: number, w: number, h: number) => {
     g.beginPath();
     g.moveTo(x + r, y);
@@ -51,13 +54,13 @@ function drawStuds(opts: StudOptions): HTMLCanvasElement {
       const cy = y * step + (step - s) / 2;
       // Shadow (bottom-right), highlight (top-left), then the outline — reads as a raised stud.
       g.lineWidth = step * 0.07;
-      g.strokeStyle = "rgba(0,0,0,0.22)";
+      g.strokeStyle = `rgba(0,0,0,${0.22 * k})`;
       roundRect(cx + step * 0.04, cy + step * 0.05, s, s);
       g.stroke();
       g.strokeStyle = "rgba(255,255,255,0.55)";
       roundRect(cx - step * 0.02, cy - step * 0.02, s, s);
       g.stroke();
-      g.strokeStyle = "rgba(0,0,0,0.12)";
+      g.strokeStyle = `rgba(0,0,0,${0.12 * k})`;
       roundRect(cx, cy, s, s);
       g.stroke();
     }
@@ -83,7 +86,7 @@ function baseTexture(key: string, opts: StudOptions): THREE.CanvasTexture {
 
 /** Floor texture: one tile covers 4×4 units with 8×8 studs and a soft 2×2 checker. */
 export function floorTexture(widthUnits: number, depthUnits: number): THREE.Texture {
-  const t = baseTexture("floor", { studs: 8, checker: 2, checkerDark: 0.93 }).clone();
+  const t = baseTexture("floor", { studs: 8, checker: 2, checkerDark: 0.97, outline: 0.35 }).clone();
   t.repeat.set(widthUnits / 4, depthUnits / 4);
   t.needsUpdate = true;
   return t;
@@ -99,7 +102,7 @@ export function wallTexture(lengthUnits: number, heightUnits: number): THREE.Tex
 
 /** Small stud texture for props (fences, stalls). One tile = 2×2 units. */
 export function propTexture(): THREE.Texture {
-  return baseTexture("prop", { studs: 4, checker: 0, checkerDark: 1 });
+  return baseTexture("prop", { studs: 4, checker: 0, checkerDark: 1, outline: 0.4 });
 }
 
 /** Glowing chevron tread pattern for treadmill belts, used as an emissive map (white = glow). */
@@ -114,18 +117,29 @@ export function beltTexture(): THREE.Texture {
     const g = c.getContext("2d")!;
     g.fillStyle = "#000000";
     g.fillRect(0, 0, c.width, c.height);
-    g.strokeStyle = "#ffffff";
-    g.lineWidth = size * 0.16;
     g.lineCap = "round";
     g.lineJoin = "round";
     const step = size * 0.55;
-    for (let y = -step; y < c.height + step; y += step) {
-      g.beginPath();
-      g.moveTo(size * 0.14, y);
-      g.lineTo(size * 0.5, y + step * 0.55);
-      g.lineTo(size * 0.86, y);
-      g.stroke();
+    // Chevrons point toward -z (canvas top): the runner's running direction, matching the belt scroll.
+    // Two passes: a wide blurred halo, then a bright core, so the arrows read as glowing.
+    const passes = [
+      { width: size * 0.2, color: "#9a9a9a", blur: size * 0.14 },
+      { width: size * 0.1, color: "#ffffff", blur: size * 0.05 },
+    ];
+    for (const p of passes) {
+      g.strokeStyle = p.color;
+      g.shadowColor = "#ffffff";
+      g.shadowBlur = p.blur;
+      g.lineWidth = p.width;
+      for (let y = -step; y < c.height + step; y += step) {
+        g.beginPath();
+        g.moveTo(size * 0.14, y + step * 0.55);
+        g.lineTo(size * 0.5, y);
+        g.lineTo(size * 0.86, y + step * 0.55);
+        g.stroke();
+      }
     }
+    g.shadowBlur = 0;
     base = new THREE.CanvasTexture(c);
     base.colorSpace = THREE.SRGBColorSpace;
     base.wrapS = base.wrapT = THREE.RepeatWrapping;

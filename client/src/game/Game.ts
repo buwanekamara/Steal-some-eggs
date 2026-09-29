@@ -196,6 +196,7 @@ export class Game {
       shake: (s) => this.rig.shake(s),
       avatarOf: (id) => (id === this.room?.sessionId ? (this.myAvatar ?? undefined) : this.remotes.get(id)?.avatar),
     });
+    if (import.meta.env.DEV) this.hud.onDevToggleNight = () => this.room?.send(MSG.DevToggleNight);
     this.hud.onSlowModeChange = (on) => this.setSlowMode(on);
     this.input.onKey((code) => {
       if (code === "KeyC") this.setSlowMode(!this.me.slowMode);
@@ -212,6 +213,7 @@ export class Game {
           else this.panel.close();
         }
       }
+      if (code === "KeyN" && import.meta.env.DEV) this.room?.send(MSG.DevToggleNight);
       if (code === "KeyM" && import.meta.env.DEV) this.room?.send(MSG.DevMoney);
       if (code === "KeyK" && import.meta.env.DEV) this.room?.send(MSG.DevGems);
       if (code === "KeyP" && import.meta.env.DEV) for (let i = 0; i < 3; i++) this.room?.send(MSG.DevPet, "forest_chick");
@@ -327,6 +329,7 @@ export class Game {
     cb.listen("isNight", (isNight: boolean) => {
       timers();
       this.world.setNightBarrier(isNight);
+      this.world.setNight(isNight);
       this.hud.showNightBanner(isNight);
     });
     cb.listen("potionAvailable", (available: boolean) => {

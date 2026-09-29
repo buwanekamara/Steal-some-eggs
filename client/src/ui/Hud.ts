@@ -22,6 +22,7 @@ export class Hud {
   private listEl: HTMLElement;
   private statusEl: HTMLElement;
   private debugEl: HTMLElement;
+  onDevToggleNight?: () => void;
   private slowToggle: HTMLElement;
   private helpEl: HTMLElement;
   private nightEl: HTMLElement;
@@ -107,11 +108,12 @@ export class Hud {
           <div class="pl-rows"></div>
         </div>
         <div class="debug" hidden></div>
+        ${import.meta.env.DEV ? '<button class="dev-night" type="button">🌗 Toggle Night</button>' : ""}
         <div class="help panel">
           <b>Controls</b><br/>
           ${isTouch ? "Left thumb: move · Right side drag: camera · ⬆: jump · Tap a hotbar slot to hold it, the action button to use it · Hold 👆 on an egg: steal" : "WASD / arrows: move · Space: jump · Hold E: steal egg · 1–0: hotbar · F: use held item · B: inventory · Drag mouse: camera · Wheel: zoom"}<br/>
           ${isTouch ? "" : "Gamepad: stick move · A jump · X use · LB/RB hotbar · Y inventory<br/>C: Slow Mode · Tab: pets · F3: debug info · H: hide this help"}
-          ${!isTouch && import.meta.env.DEV ? "<br/><i>Dev: = ×10 Speed stat · - reset · J: free egg · G: finish growing eggs · M: +$1M · K: +100 💎 · P: 3 Chicks · URL ?profile=name for a 2nd test player</i>" : ""}
+          ${!isTouch && import.meta.env.DEV ? "<br/><i>Dev: = ×10 Speed stat · - reset · J: free egg · G: finish growing eggs · N: toggle night/day · M: +$1M · K: +100 💎 · P: 3 Chicks · URL ?profile=name for a 2nd test player</i>" : ""}
         </div>
       </div>`,
     );
@@ -121,6 +123,10 @@ export class Hud {
     this.listEl = q(".pl-rows");
     this.statusEl = q(".hud-status");
     this.debugEl = q(".debug");
+    this.root.querySelector(".dev-night")?.addEventListener("click", (e) => {
+      (e.currentTarget as HTMLElement).blur(); // keep Space/Enter from re-triggering it
+      this.onDevToggleNight?.();
+    });
     this.slowToggle = q(".slow-mode");
     this.helpEl = q(".help");
     this.nightEl = q(".timer.night .val");
@@ -207,6 +213,16 @@ export class Hud {
   /** Persistent banner while night is active (biomes sealed off), shown/hidden on the isNight transition. */
   showNightBanner(isNight: boolean) {
     this.nightBannerEl.hidden = !isNight;
+    if (isNight) {
+      this.nightBannerEl.classList.remove("pop");
+      void this.nightBannerEl.offsetWidth; // restart the pop animation
+      this.nightBannerEl.classList.add("pop");
+    }
+    // Full-screen transition: bright flash that sinks into darkness (night) or fades out warm (day).
+    const fx = document.createElement("div");
+    fx.className = `screen-fx ${isNight ? "to-night" : "to-day"}`;
+    this.root.appendChild(fx);
+    fx.addEventListener("animationend", () => fx.remove());
   }
 
   setGems(n: number) {

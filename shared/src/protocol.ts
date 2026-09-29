@@ -62,6 +62,8 @@ export const MSG = {
   DevMoney: "devMoney",
   DevGems: "devGems",
   DevPet: "devPet",
+  /** client → server (dev builds only): jump to the other phase of the day/night cycle. */
+  DevToggleNight: "devToggleNight",
 
   // ---- world events (Phase 6)
   /** client → server: claim the potion pickup (must be standing at its spot while it's available). */

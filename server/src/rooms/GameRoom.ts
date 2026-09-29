@@ -172,6 +172,7 @@ export class GameRoom extends Room<{ state: GameState }> {
         if (!p) return;
         p.speedStat = action === "up" ? Math.min(1e12, p.speedStat * 10 + 10) : 0;
       });
+      this.onMessage(MSG.DevToggleNight, () => this.devToggleNight());
       this.onMessage(MSG.DevGrow, (client) => this.pens.devGrow(client.sessionId));
       this.onMessage(MSG.DevEgg, (client) => this.pens.devEgg(client.sessionId));
       this.onMessage(MSG.DevMoney, (client) => this.progress.devMoney(client.sessionId));
@@ -317,9 +318,23 @@ export class GameRoom extends Room<{ state: GameState }> {
   /** Which potionEverySec cycle we've last spawned the potion for (-1 = none yet). */
   private potionCycleSeen = -1;
 
+  /** Dev-only: ms added to the day/night clock so the debug button can jump straight to the other phase. */
+  private nightShiftMs = 0;
+
+  private nightCyclePos() {
+    return (((Date.now() - SERVER_START + this.nightShiftMs) / 1000) % WORLD_EVENTS.nightEverySec + WORLD_EVENTS.nightEverySec) % WORLD_EVENTS.nightEverySec;
+  }
+
+  /** Dev-only: skip to the start of night (if it's day) or the start of day (if it's night). */
+  private devToggleNight() {
+    const pos = this.nightCyclePos();
+    const target = this.state.isNight ? WORLD_EVENTS.nightDurationSec : WORLD_EVENTS.nightEverySec;
+    this.nightShiftMs += (target - pos) * 1000 + 50;
+  }
+
   private updateWorldTimers() {
     const elapsed = (Date.now() - SERVER_START) / 1000;
-    const cyclePos = elapsed % WORLD_EVENTS.nightEverySec;
+    const cyclePos = this.nightCyclePos();
     const wasNight = this.state.isNight;
     this.state.isNight = cyclePos < WORLD_EVENTS.nightDurationSec;
     this.state.nightIn = Math.ceil(this.state.isNight ? WORLD_EVENTS.nightDurationSec - cyclePos : WORLD_EVENTS.nightEverySec - cyclePos);
