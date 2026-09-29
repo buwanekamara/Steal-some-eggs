@@ -1,3 +1,13 @@
+---
+title: Egg Heist
+emoji: 🥚
+colorFrom: yellow
+colorTo: red
+sdk: docker
+app_port: 8080
+pinned: false
+---
+
 # Egg Heist
 
 A browser multiplayer egg-stealing simulator (Three.js + Colyseus).
