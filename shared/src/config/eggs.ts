@@ -1,5 +1,6 @@
 // Eggs, nests and guardians. Add a biome's content here; server and client read it as data.
 
+import { walkSpeedFromStat } from "./balance.ts";
 import { biomeLength, biomeStartZ, BIOMES } from "./world.ts";
 
 // ---------------------------------------------------------------- eggs
@@ -104,13 +105,16 @@ export interface GuardianDef {
   model?: string;
 }
 
-/** Guardian's sleeping spot: partway into its biome, offset toward one wall so it (and its nest ring) reads as a corner cluster, not a big centered arena. */
+/**
+ * Guardian's sleeping spot: tucked into a far corner of its biome (alternating left/right), as deep as it can go while its
+ * ring of nests (radius up to 8) still fits between the walls and before the next biome begins.
+ */
 function guardianHome(biomeId: string): { x: number; z: number } {
   const i = BIOMES.findIndex((b) => b.id === biomeId);
-  return { x: (i % 2 === 0 ? -1 : 1) * 16, z: biomeStartZ(i) + biomeLength(i) * 0.4 };
+  return { x: (i % 2 === 0 ? -1 : 1) * 21, z: biomeStartZ(i) + biomeLength(i) - 13 };
 }
 
-export const GUARDIANS: GuardianDef[] = [
+const GUARDIAN_DEFS: GuardianDef[] = [
   {
     id: "forest_hen",
     name: "Broody Hen",
@@ -185,7 +189,7 @@ export const GUARDIANS: GuardianDef[] = [
   },
   {
     id: "abyss_kraken",
-    name: "Abyss Kraken",
+    name: "Abyss Shark",
     biome: "abyss",
     home: guardianHome("abyss"),
     chaseSpeed: 17.7,
@@ -256,6 +260,21 @@ export const GUARDIANS: GuardianDef[] = [
     maxChaseSec: 45,
   },
 ];
+
+/**
+ * The early biomes are beatable: their guardian runs 10% faster than a player with the biome's recommended Speed
+ * (the Forest hen is a bit quicker than a newbie). From the Jungle on, every guardian chases at the same constant, very
+ * high speed (a player tops out at 48 without a trail), so only strong trails escape them.
+ */
+export const GUARDIAN_CHASE_SPEED = 50;
+const GENTLE_BIOMES = new Set(["forest", "lake", "desert"]);
+/** How much faster than a player at the recommended Speed the beatable early guardians run. */
+const GENTLE_OVER_RECOMMENDED = 1.1;
+export const GUARDIANS: GuardianDef[] = GUARDIAN_DEFS.map((g) => {
+  const rec = BIOMES.find((b) => b.id === g.biome)?.recommendedSpeed ?? 0;
+  const chase = GENTLE_BIOMES.has(g.biome) ? Math.max(g.chaseSpeed, +(walkSpeedFromStat(rec) * GENTLE_OVER_RECOMMENDED).toFixed(1)) : GUARDIAN_CHASE_SPEED;
+  return { ...g, chaseSpeed: chase, walkSpeed: +(chase * 0.6).toFixed(1) };
+});
 
 export function guardianModelId(def: GuardianDef) {
   return def.model ?? `guardian_${def.biome}`;

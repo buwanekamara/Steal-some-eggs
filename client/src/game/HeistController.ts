@@ -131,7 +131,8 @@ export class HeistController {
       this.ctx.scene.add(obj);
       this.traps.set(key as string, obj);
       this.trapViews.set(key as string, view);
-      if (view.ownerId === room.sessionId) sfx.trapSet();
+      // Mine always clicks; other players' traps are heard when they are set nearby.
+      sfx.trapSet(view.ownerId === room.sessionId ? 1 : sfx.near(view.x, view.z, 35));
     });
     cb.onRemove("traps", (_value, key) => {
       this.traps.get(key as string)?.removeFromParent();
@@ -148,7 +149,7 @@ export class HeistController {
         m.kind === "trap"
           ? (m.by ? `Caught in ${m.by}'s trap!` : "Caught in a trap!") + eggPart
           : m.by
-            ? `${m.by} bapped you with a bat!${eggPart}`
+            ? `${m.by} slashed you with a sword!${eggPart}`
             : "You got caught and dropped the egg!";
       this.ctx.heistHud.toast(text, "bad");
     });

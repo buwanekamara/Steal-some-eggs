@@ -105,6 +105,11 @@ export function propTexture(): THREE.Texture {
   return baseTexture("prop", { studs: 4, checker: 0, checkerDark: 1, outline: 0.4 });
 }
 
+/** Very faint version of the prop studs, for creatures: keeps a hint of texture without dark squares over their colours. */
+export function softPropTexture(): THREE.Texture {
+  return baseTexture("propSoft", { studs: 4, checker: 0, checkerDark: 1, outline: 0.1 });
+}
+
 /** Glowing chevron tread pattern for treadmill belts, used as an emissive map (white = glow). */
 export function beltTexture(): THREE.Texture {
   const key = "belt";
@@ -190,25 +195,67 @@ export function questionTexture(): THREE.Texture {
   const key = "question";
   let t = cache.get(key);
   if (!t) {
-    const size = 256;
+    // Matches the Fuse Machine's 3.9 × 3.7 screen, so the "?" isn't squashed.
+    const w = 256;
+    const h = 243;
     const c = document.createElement("canvas");
-    c.width = c.height = size;
+    c.width = w;
+    c.height = h;
     const g = c.getContext("2d")!;
-    g.fillStyle = "#0a2c52";
-    g.fillRect(0, 0, size, size);
-    const grad = g.createRadialGradient(size / 2, size / 2, size * 0.1, size / 2, size / 2, size * 0.65);
-    grad.addColorStop(0, "#154a86");
-    grad.addColorStop(1, "#0a2c52");
+    const grad = g.createRadialGradient(w / 2, h / 2, w * 0.1, w / 2, h / 2, w * 0.7);
+    grad.addColorStop(0, "#d9f5ff");
+    grad.addColorStop(1, "#a9e2fa");
     g.fillStyle = grad;
-    g.fillRect(0, 0, size, size);
-    g.fillStyle = "#eaf6ff";
-    g.font = `900 ${size * 0.72}px sans-serif`;
+    g.fillRect(0, 0, w, h);
+    // Dark blue "?" centred on the glyph's real bounds (not the text baseline), so it sits in the middle of the screen.
+    g.fillStyle = "#123a86";
+    g.font = `900 ${h * 0.72}px sans-serif`;
     g.textAlign = "center";
-    g.textBaseline = "middle";
-    g.fillText("?", size / 2, size * 0.56);
+    g.textBaseline = "alphabetic";
+    const m = g.measureText("?");
+    const top = m.actualBoundingBoxAscent;
+    const bottom = m.actualBoundingBoxDescent;
+    g.fillText("?", w / 2, h / 2 + (top - bottom) / 2);
     t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
     cache.set(key, t);
   }
   return t;
+}
+
+/**
+ * Rescales a box's UVs by its real face sizes so one texture tile always covers `tile` world units
+ * (no stretching on big or thin faces). Use this instead of scaling a unit cube after texturing.
+ */
+export function tileBoxUVs<T extends THREE.BoxGeometry>(geo: T, w: number, h: number, d: number, tile = 2): T {
+  const uv = geo.getAttribute("uv") as THREE.BufferAttribute;
+  // BoxGeometry face order: +x, -x, +y, -y, +z, -z (4 vertices each).
+  const faces = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+  faces.forEach(([fu, fv], f) => {
+    for (let i = f * 4; i < f * 4 + 4; i++) uv.setXY(i, (uv.getX(i) * fu) / tile, (uv.getY(i) * fv) / tile);
+  });
+  uv.needsUpdate = true;
+  return geo;
+}
+
+/**
+ * Same idea for InstancedMesh boxes that are non-uniformly scaled per instance: the shader multiplies the UVs
+ * by each instance's real face size. `base` is the source geometry's size.
+ */
+export function tileInstancedUVs<M extends THREE.Material>(material: M, base: [number, number, number], tile = 2): M {
+  const size = `vec3(${base.map((n) => n.toFixed(4)).join(",")})`;
+  material.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace(
+      "#include <uv_vertex>",
+      `#include <uv_vertex>
+      #if defined( USE_INSTANCING ) && defined( USE_MAP )
+        vec3 tSc = vec3( length( instanceMatrix[0].xyz ), length( instanceMatrix[1].xyz ), length( instanceMatrix[2].xyz ) ) * ${size};
+        vec3 tN = abs( normal );
+        vec2 tDim = tN.x > 0.5 ? tSc.zy : ( tN.y > 0.5 ? tSc.xz : tSc.xy );
+        vMapUv = ( mapTransform * vec3( uv * tDim / ${tile.toFixed(2)}, 1.0 ) ).xy;
+      #endif`,
+    );
+  };
+  material.customProgramCacheKey = () => `tileInst_${size}_${tile}`;
+  return material;
 }

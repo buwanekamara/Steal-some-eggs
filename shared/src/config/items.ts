@@ -1,4 +1,4 @@
-// Hotbar and tool items (baseball bat, bear trap). Eggs and pets are items too, defined in eggs.ts / pets.ts.
+// Hotbar and tool items (sword, bear trap). Eggs and pets are items too, defined in eggs.ts / pets.ts.
 
 /** Hotbar slots: keys 1–9, then 0 for the tenth. */
 export const HOTBAR_SIZE = 10;
@@ -17,7 +17,7 @@ export interface ToolDef {
 }
 
 export const TOOLS: Record<ToolKind, ToolDef> = {
-  bat: { kind: "bat", name: "Baseball Bat", icon: "🏏", maxStack: 1 },
+  bat: { kind: "bat", name: "Sword", icon: "🗡️", maxStack: 1 },
   trap: { kind: "trap", name: "Bear Trap", icon: "🪤", maxStack: 99 },
 };
 

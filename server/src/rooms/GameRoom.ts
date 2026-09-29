@@ -17,6 +17,9 @@ import {
   USE_RANGE,
   WORLD_EVENTS,
   basePlot,
+  GUARDIANS,
+  OFFLINE_CASH_SERVER_RADIUS,
+  offlineCashSpot,
   clampToWorld,
   formatShort,
   groundHeightAt,
@@ -27,6 +30,7 @@ import {
   trailMult,
   useSpot,
   walkSpeedFromStat,
+  biomeSpeedMult,
   type CooldownMsg,
   type CorrectMsg,
   type UseMsg,
@@ -57,6 +61,8 @@ interface PlayerMeta {
   /** While knocked back (ms timestamp): no actions, and bigger moves are allowed. */
   knockUntil: number;
   knockSpeed: number;
+  /** Server-side knockback flight (same physics as the client): horizontal + vertical velocity while stunned. */
+  knockV: { x: number; z: number; y: number };
   /** Next time (ms timestamp) this player's bat is ready to swing again. */
   batReadyAt: number;
 }
@@ -126,6 +132,8 @@ export class GameRoom extends Room<{ state: GameState }> {
   });
 
   onCreate() {
+    // So it is obvious in the server log which guardian speeds this process is actually using (restart after editing shared config).
+    console.log("[guardians] chase speeds:", GUARDIANS.map((g) => `${g.biome} ${g.chaseSpeed}`).join(", "));
     this.onMessage(MSG.Move, (client, msg: MoveMsg) => this.handleMove(client, msg));
     this.onMessage(MSG.SlowMode, (client, on: unknown) => {
       const p = this.state.players.get(client.sessionId);
@@ -212,7 +220,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.state.players.set(client.sessionId, p);
 
     const now = Date.now();
-    const meta: PlayerMeta = { profileId, profile, lastMoveAt: now, lastSaveAt: now, stepAccum: 0, released: false, knockUntil: 0, knockSpeed: 0, batReadyAt: 0 };
+    const meta: PlayerMeta = { profileId, profile, lastMoveAt: now, lastSaveAt: now, stepAccum: 0, released: false, knockUntil: 0, knockSpeed: 0, knockV: { x: 0, z: 0, y: 0 }, batReadyAt: 0 };
     this.meta.set(client.sessionId, meta);
     this.pens.attach(client.sessionId, p, profile);
 
@@ -256,6 +264,11 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.state.players.forEach((p, sessionId) => {
       const m = this.meta.get(sessionId);
       if (!m) return;
+      // Knocked state is server-driven for the whole stun; it ends when the stun does.
+      if (Date.now() < m.knockUntil) {
+        p.anim = Anim.Knocked;
+        this.flyKnocked(p, m, dt);
+      } else if (p.anim === Anim.Knocked) p.anim = Anim.Idle;
       this.train(p, m, dt);
     });
     this.heist.tick(dt);
@@ -284,11 +297,41 @@ export class GameRoom extends Room<{ state: GameState }> {
     return "";
   }
 
+  /**
+   * The server flies a knocked player along the knockback itself (same drag and gravity as their own game), so everyone sees
+   * the throw even when the victim's window is throttled and isn't sending positions.
+   */
+  private flyKnocked(p: PlayerState, m: PlayerMeta, dt: number) {
+    const v = m.knockV;
+    const ground = groundHeightAt(p.x, p.z);
+    const grounded = p.y <= ground + 0.001 && v.y <= 0;
+    p.x += v.x * dt;
+    p.z += v.z * dt;
+    const drag = Math.exp(-dt * (grounded ? 7 : 0.8));
+    v.x *= drag;
+    v.z *= drag;
+    v.y -= MOVEMENT.gravity * dt;
+    p.y += v.y * dt;
+    const floor = groundHeightAt(p.x, p.z);
+    if (p.y <= floor) {
+      p.y = floor;
+      v.y = 0;
+    }
+    const c = clampToWorld(p.x, p.z);
+    p.x = c.x;
+    p.z = c.z;
+  }
+
   private knock(sessionId: string, msg: KnockMsg) {
     const m = this.meta.get(sessionId);
     if (!m) return;
     m.knockUntil = Date.now() + msg.stunMs;
     m.knockSpeed = Math.hypot(msg.vx, msg.vz);
+    m.knockV = { x: msg.vx, z: msg.vz, y: msg.vy };
+    // The server marks the victim as knocked itself, so everyone else sees the ragdoll even if the victim's own game
+    // isn't sending updates (e.g. its browser tab is in the background).
+    const victim = this.state.players.get(sessionId);
+    if (victim) victim.anim = Anim.Knocked;
     m.profile.stats.timesCaught++;
     this.clients.getById(sessionId)?.send(MSG.Knock, msg);
   }
@@ -384,12 +427,13 @@ export class GameRoom extends Room<{ state: GameState }> {
    */
   private batHit(client: Client, p: PlayerState, m: PlayerMeta) {
     if (!this.heldTool(p, m, "bat")) return;
-    if (PVP.blockedInSafeZone && p.z < SAFE_ZONE_Z) return this.notify(client, "Can't use the bat in the safe zone.", "bad");
+    if (PVP.blockedInSafeZone && p.z < SAFE_ZONE_Z) return this.notify(client, "Can't use the sword in the safe zone.", "bad");
     const now = Date.now();
     if (now < m.batReadyAt) return;
     m.batReadyAt = now + PVP.cooldownSec * 1000;
     const cd: CooldownMsg = { kind: "bat", sec: PVP.cooldownSec };
     client.send(MSG.Cooldown, cd);
+    this.broadcast(MSG.Swing, client.sessionId);
 
     const arc = (PVP.arcDeg * Math.PI) / 180;
     const inArc = (x: number, z: number) => {
@@ -550,6 +594,9 @@ export class GameRoom extends Room<{ state: GameState }> {
   private claimOffline(client: Client) {
     const p = this.state.players.get(client.sessionId);
     if (!p || p.offlineEarnings <= 0) return;
+    // The cash floats in the player's own pen: they have to walk up to it.
+    const spot = offlineCashSpot(p.baseIndex);
+    if (Math.hypot(p.x - spot.x, p.z - spot.z) > OFFLINE_CASH_SERVER_RADIUS) return;
     p.money += p.offlineEarnings;
     this.notify(client, `Welcome back! Claimed $${formatShort(p.offlineEarnings)} in offline earnings.`, "good");
     p.offlineEarnings = 0;
@@ -620,9 +667,12 @@ export class GameRoom extends Room<{ state: GameState }> {
     m.lastMoveAt = now;
     this.perf.moves++;
 
+    // While the server is flying a knocked player, their own position reports are ignored (they would fight the flight).
+    if (now < m.knockUntil) return;
+
     // Knockback flings players faster than they can walk; allow it for the stun window (+ landing time).
     const knocked = now < m.knockUntil + 500;
-    const speed = Math.max(walkSpeedFromStat(p.speedStat, p.slowMode, trailMult(p.trail)), knocked ? m.knockSpeed : 0);
+    const speed = Math.max(walkSpeedFromStat(p.speedStat, p.slowMode, trailMult(p.trail)) * Math.max(biomeSpeedMult(p.z), biomeSpeedMult(msg.z)), knocked ? m.knockSpeed : 0);
     const maxStep = speed * dt * NETWORK.moveTolerance + NETWORK.moveSlack;
     const dx = msg.x - p.x;
     const dz = msg.z - p.z;
@@ -641,6 +691,6 @@ export class GameRoom extends Room<{ state: GameState }> {
     p.y = msg.y;
     p.z = msg.z;
     p.ry = msg.ry;
-    p.anim = msg.anim === Anim.Run || msg.anim === Anim.Air || (msg.anim === Anim.Knocked && knocked) ? msg.anim : Anim.Idle;
+    p.anim = now < m.knockUntil ? Anim.Knocked : msg.anim === Anim.Run || msg.anim === Anim.Air || (msg.anim === Anim.Knocked && knocked) ? msg.anim : Anim.Idle;
   }
 }

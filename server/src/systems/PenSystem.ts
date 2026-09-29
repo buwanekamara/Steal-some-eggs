@@ -7,6 +7,7 @@ import {
   MUTATION_BY_ID,
   rollEgg,
   PEN,
+  penSlotsTotal,
   PET_BY_ID,
   SELL_MULT,
   eggSellValue,
@@ -89,14 +90,14 @@ export class PenSystem {
   /** Player joined: mirror their saved pen into the synced state. */
   attach(sessionId: string, p: PlayerState, profile: Profile) {
     this.owners.set(sessionId, { p, profile });
-    p.penSlots = profile.penSlots;
+    p.penSlots = this.slotsOf(profile);
     p.penLevel = profile.penLevel;
     p.trail = profile.trail;
     p.pets.clear();
     p.penEggs.clear();
     for (const pet of profile.pets) if (pet.equipped) this.showPet(p, pet);
     // More equipped than slots (e.g. hand-edited save): bench the extras.
-    while (this.used(profile) > profile.penSlots) {
+    while (this.used(profile) > this.slotsOf(profile)) {
       const extra = profile.pets.find((x) => x.equipped);
       if (!extra) break;
       extra.equipped = false;
@@ -133,8 +134,9 @@ export class PenSystem {
     if (p.equipped !== "egg") return;
     const index = profile.eggs.findIndex((e) => e.uid === p.equippedUid);
     if (index < 0) return this.changed(sessionId); // stale hand: resync
-    if (this.used(profile) >= profile.penSlots) return this.hooks.notify(sessionId, "Your pen is full! Buy a slot or take a pet out.", "bad");
-    if (!inPen(p.baseIndex, p.x, p.z, PEN.inset)) return this.hooks.notify(sessionId, "Go to your pen to place it.", "bad");
+    // Growing eggs have their own room: a full set of active pets never stops you planting.
+    if (profile.penEggs.length >= this.slotsOf(profile)) return this.hooks.notify(sessionId, "Your pen has no room for more eggs — hatch one first.", "bad");
+    if (!inPen(p.baseIndex, p.x, p.z, PEN.inset, profile.penLevel)) return this.hooks.notify(sessionId, "Go to your pen to place it.", "bad");
 
     const plot = basePlot(p.baseIndex);
     const dx = p.x - plot.cx;
@@ -163,9 +165,9 @@ export class PenSystem {
   placePet(sessionId: string) {
     const o = this.owners.get(sessionId);
     if (!o) return;
-    const { p } = o;
+    const { p, profile } = o;
     if (p.equipped !== "pet") return;
-    if (!inPen(p.baseIndex, p.x, p.z, PEN.inset)) return this.hooks.notify(sessionId, "Go to your pen to place it.", "bad");
+    if (!inPen(p.baseIndex, p.x, p.z, PEN.inset, profile.penLevel)) return this.hooks.notify(sessionId, "Go to your pen to place it.", "bad");
     this.equip(sessionId, p.equippedUid, true);
   }
 
@@ -254,15 +256,14 @@ export class PenSystem {
       // A fused egg was rolled when it was made; anything else rolls now.
       weight: egg.fusion ? egg.fusion.weight : rollWeight(def, egg.size, Math.random()),
       mutation: egg.fusion ? egg.fusion.mutation : (rollMutation(Math.random())?.id ?? ""),
-      equipped: true, // takes over the egg's slot
+      equipped: false, // goes to the hotbar / backpack; put it in the pen from there
       obtainedAt: this.now(),
     };
     profile.pets.push(pet);
     const isNew = !profile.discovered.includes(def.id);
     if (isNew) profile.discovered.push(def.id);
     profile.stats.eggsHatched++;
-    this.showPet(p, pet);
-    this.refreshIncome(p, profile);
+    stash(profile, pet.uid); // first free hotbar slot; with a full hotbar it stays in the backpack
     this.hooks.hatched(sessionId, { pet: this.invPet(pet, profile), isNew });
     this.changed(sessionId);
   }
@@ -273,7 +274,7 @@ export class PenSystem {
     const { p, profile } = o;
     const pet = profile.pets.find((x) => x.uid === petUid);
     if (!pet || pet.equipped === on) return;
-    if (on && this.used(profile) >= profile.penSlots) return this.hooks.notify(sessionId, "Your pen is full! Buy a slot or take a pet out.", "bad");
+    if (on && this.used(profile) >= this.slotsOf(profile)) return this.hooks.notify(sessionId, "Your pen is full! Buy a slot or take a pet out.", "bad");
     pet.equipped = on;
     if (on) this.showPet(p, pet);
     else p.pets.delete(pet.uid);
@@ -286,7 +287,7 @@ export class PenSystem {
     const o = this.owners.get(sessionId);
     if (!o) return;
     const { p, profile } = o;
-    const room = profile.penSlots - profile.penEggs.length;
+    const room = this.slotsOf(profile);
     const ranked = [...profile.pets].sort((a, b) => this.income(b, profile) - this.income(a, profile));
     ranked.forEach((pet, i) => {
       const on = i < room;
@@ -308,8 +309,8 @@ export class PenSystem {
     if (p.money < cost) return this.hooks.notify(sessionId, "Not enough money for another slot.", "bad");
     p.money -= cost;
     profile.penSlots++;
-    p.penSlots = profile.penSlots;
-    this.hooks.notify(sessionId, `Pen slot unlocked! (${profile.penSlots} slots)`, "good");
+    p.penSlots = this.slotsOf(profile);
+    this.hooks.notify(sessionId, `Pen slot unlocked! (${this.slotsOf(profile)} slots)`, "good");
     this.changed(sessionId);
   }
 
@@ -342,8 +343,14 @@ export class PenSystem {
 
   // ------------------------------------------------------------------ helpers
 
+  /** Active pets standing in the pen (growing eggs are counted separately). */
   private used(profile: Profile) {
-    return profile.pets.filter((x) => x.equipped).length + profile.penEggs.length;
+    return profile.pets.filter((x) => x.equipped).length;
+  }
+
+  /** Pet slots: the ones you bought plus what your pen level unlocks. Growing eggs may also fill this many. */
+  private slotsOf(profile: Profile) {
+    return penSlotsTotal(profile.penSlots, profile.penLevel);
   }
 
   /** $/s of a pet in this owner's pen (includes the pen level bonus). */
@@ -379,7 +386,7 @@ export class PenSystem {
     const o = this.owners.get(sessionId);
     if (!o) return;
     const { p, profile } = o;
-    p.penSlots = profile.penSlots;
+    p.penSlots = this.slotsOf(profile);
     p.penLevel = profile.penLevel;
     p.trail = profile.trail;
     for (const pet of profile.pets) if (pet.equipped) this.showPet(p, pet, profile);
@@ -525,7 +532,7 @@ export class PenSystem {
     this.hooks.inventory(sessionId, {
       eggs: profile.eggs.filter((e) => EGG_BY_ID.has(e.defId)).map((e) => ({ uid: e.uid, defId: e.defId, size: e.size, ...(e.fusion ? { fusion: e.fusion } : {}) })),
       pets: profile.pets.map((x) => this.invPet(x, profile)),
-      slots: profile.penSlots,
+      slots: this.slotsOf(profile),
       nextSlotCost: profile.penSlots >= PEN.maxSlots ? 0 : slotCost(profile.penSlots),
       discovered: profile.discovered,
       claimed: profile.claimed,

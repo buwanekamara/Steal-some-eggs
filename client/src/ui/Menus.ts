@@ -99,7 +99,7 @@ export class Menus {
       { id: "featured", label: "Featured", icon: "🏷️", color: "#ff5a3a" },
       { id: "speed", label: "Speed", icon: "👟", color: "#2f9bff" },
       { id: "money", label: "Money", icon: "💵", color: "#4ce11f" },
-      { id: "gear", label: "Gear", icon: "🏏", color: "#c9944f" },
+      { id: "gear", label: "Gear", icon: "🗡️", color: "#9fb4c8" },
     ]);
     this.index = new Modal(root, "Pet Index", "#1fc0ff", [
       { id: "world", label: "World", icon: "🌍", color: "#1f8bff" },

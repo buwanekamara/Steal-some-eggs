@@ -1,6 +1,6 @@
 /** Use-button look per held item kind (touch). */
 const USE_BUTTON: Record<string, { icon: string; label: string }> = {
-  bat: { icon: "🏏", label: "Swing" },
+  bat: { icon: "🗡️", label: "Swing" },
   trap: { icon: "🪤", label: "Place" },
   egg: { icon: "✋", label: "Place" },
   pet: { icon: "✋", label: "Place" },

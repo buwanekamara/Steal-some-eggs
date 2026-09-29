@@ -99,14 +99,14 @@ export class InventoryPanel {
     const { inv, slots, money, growing } = this.data;
     const pets = [...(inv?.pets ?? [])].sort((a, b) => Number(b.equipped) - Number(a.equipped) || b.income - a.income);
     const active = pets.filter((p) => p.equipped).length;
-    const used = active + growing.length;
-    this.title.textContent = `${active}/${slots - growing.length} Active`;
+    // Active pets and growing eggs have separate room (each up to `slots`).
+    this.title.textContent = `${active}/${slots} Active`;
     const cost = inv?.nextSlotCost ?? 0;
     this.headerBtn.hidden = !cost;
     this.headerBtn.textContent = `+1 SLOT [$${formatShort(cost)}]`;
     this.headerBtn.className = `inv-head-btn ${money >= cost ? "ok" : "no"}`;
     this.headerBtn.disabled = money < cost;
-    this.headerBtn.title = growing.length ? `Growing eggs use ${growing.length} of your ${slots} slots` : "";
+    this.headerBtn.title = "Pen upgrades also add pet slots";
 
     if (!pets.length) {
       this.body.innerHTML = `<div class="inv-empty">No pets yet — hatch an egg in your pen!</div>`;
@@ -118,7 +118,7 @@ export class InventoryPanel {
           const def = PET_BY_ID.get(p.species)!;
           const mut = p.mutation ? MUTATION_BY_ID.get(p.mutation) : undefined;
           const name = esc(petDisplayName(def, p.mutation));
-          const full = !p.equipped && used >= slots;
+          const full = !p.equipped && active >= slots;
           return `<div class="inv-row${p.equipped ? " on" : ""}">
             <div class="inv-icon" style="border-color:${RARITY_COLOR[def.rarity]}">${def.icon}</div>
             <div class="inv-info"><div class="inv-name" style="color:${mut ? mut.color : RARITY_COLOR[def.rarity]}">${name}</div>

@@ -267,8 +267,83 @@ function partColor(boneName: string, shirt: THREE.Color): THREE.Color {
   return shirt;
 }
 
+// Head atlas: 4×4 cells of 64px. Cell (0,0) is plain white (used by every non-head vertex so vertex colors show through).
+const CELL = 64;
+const FACE_CELLS = { white: [0, 0], front: [1, 0], back: [2, 0], left: [3, 0], right: [0, 1], top: [1, 1], bottom: [2, 1] } as const;
+let headAtlas: THREE.CanvasTexture | null = null;
+
+/** Blocky pixel-art head: tan skin, black hair, big white eyes with dark pupils, small open mouth. */
+function headTexture(): THREE.CanvasTexture {
+  if (headAtlas) return headAtlas;
+  const c = document.createElement("canvas");
+  c.width = c.height = CELL * 4;
+  const g = c.getContext("2d")!;
+  g.imageSmoothingEnabled = false;
+  const SKIN_A = "#eaa36c";
+  const SKIN_B = "#e39a62";
+  const HAIR = "#17120f";
+  const HAIR_B = "#241b15";
+  // Each cell is a 16×16 pixel grid drawn 4× larger.
+  const cell = ([cx, cy]: readonly [number, number], draw: (px: (x: number, y: number, col: string, w?: number, h?: number) => void) => void) => {
+    draw((x, y, col, w = 1, h = 1) => {
+      g.fillStyle = col;
+      g.fillRect(cx * CELL + x * 4, cy * CELL + y * 4, w * 4, h * 4);
+    });
+  };
+  const skin = (px: (x: number, y: number, col: string, w?: number, h?: number) => void) => {
+    px(0, 0, SKIN_A, 16, 16);
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if ((x * 7 + y * 13) % 5 === 0) px(x, y, SKIN_B);
+  };
+  cell(FACE_CELLS.white, (px) => px(0, 0, "#ffffff", 16, 16));
+  cell(FACE_CELLS.front, (px) => {
+    skin(px);
+    px(0, 0, HAIR, 16, 4); // fringe
+    for (let x = 0; x < 16; x++) if (x % 3 !== 1) px(x, 4, HAIR_B);
+    px(0, 4, HAIR, 2, 4); // sideburns
+    px(14, 4, HAIR, 2, 4);
+    // Eyes: white blocks with the dark pupil on the inner side.
+    px(3, 8, "#ffffff", 4, 3);
+    px(9, 8, "#ffffff", 4, 3);
+    px(5, 8, "#1d1b3a", 2, 3);
+    px(9, 8, "#1d1b3a", 2, 3);
+    px(3, 8, "#d9dde8", 1, 1);
+    px(12, 8, "#d9dde8", 1, 1);
+    // Mouth.
+    px(7, 12, "#3a1c12", 2, 2);
+    px(6, 12, "#c97a55", 1, 2);
+    px(9, 12, "#c97a55", 1, 2);
+  });
+  cell(FACE_CELLS.back, (px) => {
+    skin(px);
+    px(0, 0, HAIR, 16, 12);
+    for (let x = 0; x < 16; x++) if (x % 3 === 0) px(x, 11, HAIR_B);
+  });
+  // Sides: front is on the right of the left(-x) cell and the left of the right(+x) cell.
+  const side = (frontOnRight: boolean) => (px: (x: number, y: number, col: string, w?: number, h?: number) => void) => {
+    skin(px);
+    px(0, 0, HAIR, 16, 4);
+    const bx = frontOnRight ? 0 : 6;
+    px(bx, 4, HAIR, 10, 6); // hair over the back of the head
+    px(frontOnRight ? 10 : 5, 4, HAIR, 1, 2);
+    px(frontOnRight ? 6 : 8, 8, "#c98a5a", 2, 2); // ear
+  };
+  cell(FACE_CELLS.left, side(true));
+  cell(FACE_CELLS.right, side(false));
+  cell(FACE_CELLS.top, (px) => {
+    px(0, 0, HAIR, 16, 16);
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if ((x * 5 + y * 3) % 7 === 0) px(x, y, HAIR_B);
+  });
+  cell(FACE_CELLS.bottom, skin);
+  headAtlas = new THREE.CanvasTexture(c);
+  headAtlas.colorSpace = THREE.SRGBColorSpace;
+  headAtlas.magFilter = THREE.NearestFilter;
+  headAtlas.minFilter = THREE.NearestFilter;
+  headAtlas.generateMipmaps = false;
+  return headAtlas;
+}
+
 /**
- * Colors each vertex by the bone that moves it most (head = skin, torso/arms = shirt, legs = pants).
+ * Colors each vertex by the bone that moves it most (head = pixel-art face texture, torso/arms = shirt, legs = pants).
  * Used for rigged models whose texture is missing. Geometry is cloned so each instance can differ.
  */
 export function applyAutoColor(root: THREE.Object3D, tint?: THREE.ColorRepresentation) {
@@ -279,7 +354,18 @@ export function applyAutoColor(root: THREE.Object3D, tint?: THREE.ColorRepresent
     const geo = mesh.geometry.clone();
     const idx = geo.attributes.skinIndex;
     const wgt = geo.attributes.skinWeight;
+    const pos = geo.attributes.position;
     const colors = new Float32Array(idx.count * 3);
+    const uvs = new Float32Array(idx.count * 2);
+    const isHead = new Uint8Array(idx.count);
+    const box = new THREE.Box3();
+    // FBX meshes sit inside rotated/scaled armature nodes, so their local axes aren't the character's: project the head in
+    // the model's own space (bind pose relative to the model root; front = +z, up = +y).
+    root.updateMatrixWorld(true);
+    const toModel = new THREE.Matrix4().copy(root.matrixWorld).invert().multiply(mesh.bindMatrix);
+    const modelPos = (v: number) => new THREE.Vector3().fromBufferAttribute(pos, v).applyMatrix4(toModel);
+    // Rigs name the head bone "Head" (Mixamo) or only "Neck1" (our placeholder rig).
+    const headRe = mesh.skeleton.bones.some((b) => /head/i.test(b.name)) ? /head/i : /neck/i;
     for (let v = 0; v < idx.count; v++) {
       let best = 0;
       let bestW = -1;
@@ -290,11 +376,64 @@ export function applyAutoColor(root: THREE.Object3D, tint?: THREE.ColorRepresent
           best = idx.getComponent(v, k);
         }
       }
-      const c = partColor(mesh.skeleton.bones[best]?.name ?? "", shirt);
+      const boneName = mesh.skeleton.bones[best]?.name ?? "";
+      const c = partColor(boneName, shirt);
       colors.set([c.r, c.g, c.b], v * 3);
+      if (headRe.test(boneName)) {
+        isHead[v] = 1;
+        box.expandByPoint(modelPos(v));
+      }
+    }
+    const size = box.isEmpty() ? new THREE.Vector3(1, 1, 1) : box.getSize(new THREE.Vector3());
+    const cellUv = ([cx, cy]: readonly [number, number], u: number, vTop: number) => {
+      const inset = 0.5 / (CELL * 4);
+      const cu = Math.min(1, Math.max(0, u));
+      const cv = Math.min(1, Math.max(0, vTop));
+      return [(cx * CELL + cu * CELL) / (CELL * 4) + (cu < 0.5 ? inset : -inset), 1 - (cy * CELL + cv * CELL) / (CELL * 4) + (cv < 0.5 ? -inset : inset)];
+    };
+    // The file's normals are smoothed (pointing out of the cube's corners), so pick each head vertex's face from the
+    // flat normal of the triangles that use it (vertices are split per face).
+    const faceN = new Float32Array(idx.count * 3);
+    const centre = box.getCenter(new THREE.Vector3());
+    {
+      const index = geo.index;
+      const tri = index ? index.count / 3 : idx.count / 3;
+      const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+      for (let t = 0; t < tri; t++) {
+        const [i0, i1, i2] = index ? [index.getX(t * 3), index.getX(t * 3 + 1), index.getX(t * 3 + 2)] : [t * 3, t * 3 + 1, t * 3 + 2];
+        if (!isHead[i0]) continue;
+        const n = c.subVectors(modelPos(i2), a.copy(modelPos(i0))).cross(b.subVectors(modelPos(i1), a)).normalize();
+        // Make sure it points out of the head, whatever the winding.
+        if (n.dot(a.sub(centre)) < 0) n.negate();
+        for (const i of [i0, i1, i2]) {
+          faceN[i * 3] += n.x;
+          faceN[i * 3 + 1] += n.y;
+          faceN[i * 3 + 2] += n.z;
+        }
+      }
+    }
+    for (let v = 0; v < idx.count; v++) {
+      if (!isHead[v]) {
+        const [u, w] = cellUv(FACE_CELLS.white, 0.5, 0.5);
+        uvs.set([u, w], v * 2);
+        continue;
+      }
+      // Box-project the head from its dominant normal axis. Front is +z and the character's right is +x.
+      const p = modelPos(v);
+      const nx = faceN[v * 3], ny = faceN[v * 3 + 1], nz = faceN[v * 3 + 2];
+      const fx = (p.x - box.min.x) / size.x;
+      const fy = (box.max.y - p.y) / size.y; // 0 at the top of the head
+      const fz = (box.max.z - p.z) / size.z; // 0 at the front
+      let uv: number[];
+      if (Math.abs(ny) > Math.abs(nx) && Math.abs(ny) > Math.abs(nz)) uv = ny > 0 ? cellUv(FACE_CELLS.top, fx, fz) : cellUv(FACE_CELLS.bottom, fx, fz);
+      else if (Math.abs(nx) > Math.abs(nz)) uv = nx > 0 ? cellUv(FACE_CELLS.right, fz, fy) : cellUv(FACE_CELLS.left, 1 - fz, fy);
+      else uv = nz > 0 ? cellUv(FACE_CELLS.front, fx, fy) : cellUv(FACE_CELLS.back, 1 - fx, fy);
+      uvs.set(uv, v * 2);
+      colors.set([1, 1, 1], v * 3); // the atlas supplies the head's colors
     }
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
     mesh.geometry = geo;
-    mesh.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0 });
+    mesh.material = new THREE.MeshStandardMaterial({ vertexColors: true, map: headTexture(), roughness: 0.8, metalness: 0 });
   });
 }

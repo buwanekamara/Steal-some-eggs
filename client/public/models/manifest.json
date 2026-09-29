@@ -83,7 +83,7 @@
     "scale": 1,
     "rotationY": 0,
     "offsetY": 0,
-    "note": "Baseball bat, held in the player's hand. Grip near the origin, barrel pointing +Y."
+    "note": "Sword, held in the player's hand. Grip near the origin, blade pointing +Y."
   },
   "trap": {
     "file": null,
@@ -412,7 +412,7 @@
     "scale": 1,
     "rotationY": 0,
     "offsetY": 0,
-    "note": "Abyss guardian (Abyss Kraken), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+    "note": "Abyss guardian (Abyss Shark), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
   },
   "guardian_prehistoric": {
     "file": null,

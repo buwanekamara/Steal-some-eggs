@@ -4,9 +4,11 @@ import {
   MOVEMENT,
   basePlot,
   clampToWorld,
+  SAFE_ZONE_Z,
   groundHeightAt,
   treadmillDeckAt,
   walkSpeedFromStat,
+  biomeSpeedMult,
 } from "@egg/shared";
 import type { CameraRig } from "./CameraRig.ts";
 import type { Input } from "./Input.ts";
@@ -23,6 +25,8 @@ export class LocalPlayer {
   anim: Anim = Anim.Idle;
   /** Current horizontal speed (for animation playback rate). */
   speed = 0;
+  /** True while the night wall is up: nothing past the safe-zone line is reachable. */
+  nightLock = false;
   speedStat = 0;
   slowMode = false;
   /** Movement multiplier from the equipped trail. */
@@ -65,7 +69,7 @@ export class LocalPlayer {
     let dx = f.x * my + rx * mx;
     let dz = f.z * my + rz * mx;
     const len = Math.hypot(dx, dz);
-    const walk = walkSpeedFromStat(this.speedStat, this.slowMode, this.trailMult);
+    const walk = walkSpeedFromStat(this.speedStat, this.slowMode, this.trailMult) * biomeSpeedMult(this.pos.z);
     const pressing = len > 0.3 || jump;
 
     // Knockback flight: fast in the air, skids to a stop on the ground.
@@ -119,6 +123,9 @@ export class LocalPlayer {
     const c = clampToWorld(this.pos.x, this.pos.z);
     this.pos.x = c.x;
     this.pos.z = c.z;
+    // Night wall: the server refuses any position past the safe-zone line, so stop here instead of walking into it and
+    // being dragged back over and over.
+    if (this.nightLock && this.pos.z > SAFE_ZONE_Z - 0.1) this.pos.z = SAFE_ZONE_Z - 0.1;
 
     // Land on the ground or a raised treadmill deck (small ledges are stepped up automatically).
     const ground = groundHeightAt(this.pos.x, this.pos.z);
@@ -154,7 +161,7 @@ export class LocalPlayer {
     this.pos.y = groundHeightAt(this.pos.x, this.pos.z);
     this.velY = 0;
     this.grounded = true;
-    this.ry = lerpAngle(this.ry, 0, Math.min(1, dt * 10));
+    this.ry = lerpAngle(this.ry, basePlot(this.homeBase).rotY, Math.min(1, dt * 10)); // face along the belt
     this.speed = walkSpeedFromStat(this.speedStat, this.slowMode, this.trailMult);
     this.anim = Anim.Run;
   }

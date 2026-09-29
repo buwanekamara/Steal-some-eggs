@@ -70,6 +70,7 @@ export class Hud {
         <div class="hud-topbar">
           <button class="tb-btn menu" title="Menu">☰</button>
           <button class="tb-btn bag" title="Inventory (B)">🎒</button>
+          <button class="tb-btn controls" title="Controls (H)">❗</button>
         </div>
         <div class="tb-menu panel" hidden>
           <div class="tm-row"><b>Graphics</b><span class="tm-opts">
@@ -147,6 +148,10 @@ export class Hud {
     q(".sq-btn.paw").addEventListener("click", () => this.onPawButton?.());
     this.offlineBannerEl.querySelector(".claim-btn")!.addEventListener("click", () => this.onOfflineClaim?.());
     q(".tb-btn.bag").addEventListener("click", () => this.onBagButton?.());
+    q(".tb-btn.controls").addEventListener("click", (e) => {
+      (e.currentTarget as HTMLElement).blur(); // keep Space/Enter from re-triggering it
+      this.toggleHelp();
+    });
     const menu = q(".tb-menu");
     q(".tb-btn.menu").addEventListener("click", () => (menu.hidden = !menu.hidden));
     menu.addEventListener("click", (e) => {
@@ -208,6 +213,16 @@ export class Hud {
       this.potionEl.textContent = `in ${formatDuration(potionIn)}`;
       this.potionEl.classList.toggle("soon", potionIn <= 15);
     }
+  }
+
+  /** Slides a banner in when the player enters a biome: its name, trait and what the trait does. */
+  showBiomeBanner(emoji: string, name: string, trait: string, desc: string) {
+    this.root.querySelector(".biome-banner")?.remove();
+    const el = document.createElement("div");
+    el.className = "biome-banner";
+    el.innerHTML = `<div class="bb-name">${emoji} ${name}</div><div class="bb-trait">${trait}</div><div class="bb-desc">${desc}</div>`;
+    this.root.appendChild(el);
+    el.addEventListener("animationend", () => el.remove());
   }
 
   /** Persistent banner while night is active (biomes sealed off), shown/hidden on the isNight transition. */

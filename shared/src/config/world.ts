@@ -4,8 +4,8 @@
 export const WALL_HEIGHT = 22;
 
 export const HUB = {
-  xMin: -100,
-  xMax: 100,
+  xMin: -115,
+  xMax: 115,
   zMin: -90,
   zMax: 0,
 } as const;
@@ -37,11 +37,13 @@ export const BASE = {
   /** x of the two side pens (mirrored: -sideX and +sideX). */
   sideX: 80,
   /** z of the two side pens — forward of the main row, closer to the corridor. */
-  sideZ: -35,
+  sideZ: -30,
 } as const;
 
 export interface BasePlot {
   index: number;
+  /** Yaw of the pen's "front" (gate side, treadmill, signs): 0 faces +z; the two side pens are turned to face each other. */
+  rotY: number;
   /** Pen center. */
   cx: number;
   cz: number;
@@ -58,25 +60,52 @@ export interface BasePlot {
 /** How close (units) a player must be to use a sign, stall or machine (server-checked). */
 export const USE_RANGE = 7;
 
+/** Turns a pen-local offset (dx sideways, dz toward the gate) into a world offset for a pen turned by `rotY`. */
+export function rotateOffset(rotY: number, dx: number, dz: number) {
+  const c = Math.cos(rotY);
+  const s = Math.sin(rotY);
+  return { x: dx * c + dz * s, z: -dx * s + dz * c };
+}
+
+/** The inverse: a world offset from a pen-local origin, expressed in the pen's own axes. */
+export function unrotateOffset(rotY: number, x: number, z: number) {
+  const c = Math.cos(rotY);
+  const s = Math.sin(rotY);
+  return { dx: x * c - z * s, dz: x * s + z * c };
+}
+
 /** Inner rectangle of a base's pen, shrunk by `inset` from the fence. */
-export function penBounds(index: number, inset = 0) {
-  const { cx, cz } = basePlot(index);
+export function penBounds(index: number, inset = 0, level = 1) {
+  const { cx, cz, rotY } = basePlot(index);
+  // A level-1 pen is W × D around its center with the gate toward local +z. Upgrades push the back (local -z) out.
+  const grow = penGrowth(level);
+  const corners = [
+    [-BASE.penWidth / 2, -BASE.penDepth / 2 - grow],
+    [BASE.penWidth / 2, BASE.penDepth / 2],
+  ].map(([dx, dz]) => rotateOffset(rotY, dx, dz)); // turned pens swap which axis is which
   return {
-    x0: cx - BASE.penWidth / 2 + inset,
-    x1: cx + BASE.penWidth / 2 - inset,
-    z0: cz - BASE.penDepth / 2 + inset,
-    z1: cz + BASE.penDepth / 2 - inset,
+    x0: cx + Math.min(corners[0].x, corners[1].x) + inset,
+    x1: cx + Math.max(corners[0].x, corners[1].x) - inset,
+    z0: cz + Math.min(corners[0].z, corners[1].z) + inset,
+    z1: cz + Math.max(corners[0].z, corners[1].z) - inset,
   };
 }
 
-export function inPen(index: number, x: number, z: number, inset = 0) {
-  const b = penBounds(index, inset);
+/** Extra pen depth (units) at a pen level: each upgrade pushes the back fence out by this much. */
+export const PEN_GROWTH_PER_LEVEL = 3;
+export function penGrowth(level: number) {
+  return Math.max(0, level - 1) * PEN_GROWTH_PER_LEVEL;
+}
+
+export function inPen(index: number, x: number, z: number, inset = 0, level = 1) {
+  const b = penBounds(index, inset, level);
   return x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1;
 }
 
 export function basePlot(index: number): BasePlot {
   let cx: number;
   let cz: number;
+  let rotY = 0;
   if (index < BASE.mainRowCount) {
     cx = -((BASE.mainRowCount - 1) * BASE.spacing) / 2 + index * BASE.spacing;
     cz = BASE.penZ;
@@ -84,19 +113,35 @@ export function basePlot(index: number): BasePlot {
     const side = index - BASE.mainRowCount; // 0 = left, 1 = right
     cx = side === 0 ? -BASE.sideX : BASE.sideX;
     cz = BASE.sideZ;
+    rotY = side === 0 ? Math.PI / 2 : -Math.PI / 2; // the two side pens face each other across the hub
   }
-  const front = cz + BASE.penDepth / 2;
+  const front = BASE.penDepth / 2;
+  // Everything is laid out for a pen facing +z, then turned around the pen's center.
+  const at = (dx: number, dz: number) => {
+    const o = rotateOffset(rotY, dx, dz);
+    return { x: cx + o.x, z: cz + o.z };
+  };
   return {
     index,
+    rotY,
     cx,
     cz,
-    spawn: { x: cx - 4, z: front + 6 },
-    treadmill: { x: cx + 5, z: front + 7 },
-    sign: { x: cx, z: front + 3 },
-    treadmillSign: { x: cx + 9.2, z: front + 7 },
-    penSign: { x: cx + 6, z: front - 2.5 },
+    spawn: at(-4, front + 6),
+    treadmill: at(5, front + 7),
+    sign: at(0, front + 3),
+    treadmillSign: at(9.2, front + 7),
+    penSign: at(6, front - 2.5),
   };
 }
+
+/** Where the floating offline-earnings cash sits in a pen; walk into it to collect. */
+export function offlineCashSpot(index: number) {
+  const p = basePlot(index);
+  return { x: p.cx, z: p.cz };
+}
+/** How close (xz) a player must be to grab the cash. The server accepts a bit more than the client asks for (lag). */
+export const OFFLINE_CASH_GRAB_RADIUS = 3.5;
+export const OFFLINE_CASH_SERVER_RADIUS = 7;
 
 // ---------------------------------------------------------------- treadmills
 
@@ -113,20 +158,18 @@ export const TREADMILL_SHAPE = {
 /** Base index whose treadmill deck is under (x, z), or -1. */
 export function treadmillDeckAt(x: number, z: number): number {
   for (let i = 0; i < BASE.count; i++) {
-    const t = basePlot(i).treadmill;
-    if (Math.abs(x - t.x) <= TREADMILL_SHAPE.deckHalfWidth && Math.abs(z - t.z) <= TREADMILL_SHAPE.deckHalfLength) return i;
+    const p = basePlot(i);
+    const { dx, dz } = unrotateOffset(p.rotY, x - p.treadmill.x, z - p.treadmill.z);
+    if (Math.abs(dx) <= TREADMILL_SHAPE.deckHalfWidth && Math.abs(dz) <= TREADMILL_SHAPE.deckHalfLength) return i;
   }
   return -1;
 }
 
 /** True when (x, y, z) is standing on the moving belt of base `index`'s treadmill. */
 export function isOnBelt(index: number, x: number, y: number, z: number): boolean {
-  const t = basePlot(index).treadmill;
-  return (
-    Math.abs(x - t.x) <= TREADMILL_SHAPE.beltHalfWidth &&
-    Math.abs(z - t.z) <= TREADMILL_SHAPE.beltHalfLength &&
-    Math.abs(y - TREADMILL_SHAPE.deckTop) < 0.35
-  );
+  const p = basePlot(index);
+  const { dx, dz } = unrotateOffset(p.rotY, x - p.treadmill.x, z - p.treadmill.z);
+  return Math.abs(dx) <= TREADMILL_SHAPE.beltHalfWidth && Math.abs(dz) <= TREADMILL_SHAPE.beltHalfLength && Math.abs(y - TREADMILL_SHAPE.deckTop) < 0.35;
 }
 
 /** Height of the walkable surface at (x, z): treadmill decks are raised, everything else is y = 0. */
@@ -183,6 +226,36 @@ export const BIOMES: BiomeDef[] = [
   { id: "celestial", name: "Celestial Rift", emoji: "😇", recommendedSpeed: 20_000_000_000, floor: "#f2f5ff", wall: "#d8c68e", wallAlt: "#cbb87e", wallTop: "#ffd966", sky: "day" },
 ];
 
+/** What makes each biome feel different: a walking-speed modifier, a fog color for the atmosphere and a name/blurb shown on entry. */
+export interface BiomeTrait {
+  name: string;
+  desc: string;
+  /** Multiplier on walk speed while inside (client and server agree, so boosts don't rubber-band). */
+  speedMult: number;
+  fog: string;
+}
+
+export const BIOME_TRAITS: Record<string, BiomeTrait> = {
+  forest: { name: "Cozy Woods", desc: "Calm and safe: a gentle place to start.", speedMult: 1, fog: "#bfe3ff" },
+  lake: { name: "Misty Shores", desc: "Cool mist drifts over the water.", speedMult: 1, fog: "#c8f0f4" },
+  desert: { name: "Scorching Sands", desc: "Loose sand and heat: you move 8% slower.", speedMult: 0.92, fog: "#f3dca0" },
+  jungle: { name: "Thick Vines", desc: "Tangled undergrowth: you move 5% slower.", speedMult: 0.95, fog: "#a6d98a" },
+  snow: { name: "Icy Slide", desc: "Slippery ice: you move 8% faster.", speedMult: 1.08, fog: "#e4f1fb" },
+  volcano: { name: "Ash & Heat", desc: "Choking ash: you move 8% slower.", speedMult: 0.92, fog: "#5a2a22" },
+  abyss: { name: "Deep Currents", desc: "Heavy water: you move 10% slower.", speedMult: 0.9, fog: "#1a3a9a" },
+  prehistoric: { name: "Primal Stomp", desc: "Ancient and wild. Watch for the Rex.", speedMult: 1, fog: "#d9c48a" },
+  cosmic: { name: "Low Gravity", desc: "Floating between stars: you move 10% faster.", speedMult: 1.1, fog: "#1b1447" },
+  cherry: { name: "Petal Breeze", desc: "A warm wind at your back: 5% faster.", speedMult: 1.05, fog: "#ffd9e8" },
+  titan: { name: "Ancient Weight", desc: "Heavy stone air: you move 5% slower.", speedMult: 0.95, fog: "#a9b9dc" },
+  celestial: { name: "Heavenly Winds", desc: "Winds lift you: you move 12% faster.", speedMult: 1.12, fog: "#fff4d0" },
+};
+
+/** Walk speed multiplier at a world z (1 in the hub). */
+export function biomeSpeedMult(z: number): number {
+  const b = biomeAt(z);
+  return b ? (BIOME_TRAITS[b.id]?.speedMult ?? 1) : 1;
+}
+
 /** Biomes start short near the hub and gradually stretch out the further you go. */
 const BIOME_BASE_LENGTH = 90;
 const BIOME_LENGTH_STEP = 14;
@@ -224,9 +297,18 @@ const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi 
  */
 export function clampToWorld(x: number, z: number, radius = 0.8): { x: number; z: number } {
   x = clamp(x, HUB.xMin + radius, HUB.xMax - radius);
-  if (Math.abs(x) > CORRIDOR_HALF_WIDTH - radius) {
+  const sideLimit = CORRIDOR_HALF_WIDTH - radius;
+  const hubFrontZ = HUB.zMax - radius;
+  if (Math.abs(x) > sideLimit && z > hubFrontZ) {
+    // Past the corridor's side wall AND beyond the hub's front wall line: either you pushed sideways into a corridor wall
+    // (slide along it) or you walked into the hub's front wall from inside the hub (stop at it). Fix whichever is the
+    // smaller move; snapping a corridor runner back into the hub was the "teleport to the safe zone" glitch.
+    if (Math.abs(x) - sideLimit < z - hubFrontZ) x = Math.sign(x) * sideLimit;
+    else z = hubFrontZ;
+  }
+  if (Math.abs(x) > sideLimit) {
     // Beside the corridor mouth: blocked by the hub's front wall.
-    z = clamp(z, HUB.zMin + radius, HUB.zMax - radius);
+    z = clamp(z, HUB.zMin + radius, hubFrontZ);
   } else {
     z = clamp(z, HUB.zMin + radius, CORRIDOR_END_Z - radius);
   }

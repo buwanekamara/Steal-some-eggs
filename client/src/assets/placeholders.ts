@@ -1,14 +1,26 @@
 import * as THREE from "three";
 import { EGG_BY_ID, PET_BY_ID } from "@egg/shared";
-import { beltTexture, eggShellTexture, propTexture, questionTexture } from "./textures.ts";
+import { blossomSpirit, golem, jaguar, shark, rex, scorpion, seraph, swan, titanGuardian, voidwatcher, yeti } from "./guardians.ts";
+import { beltTexture, eggShellTexture, propTexture, questionTexture, softPropTexture } from "./textures.ts";
 
 /**
  * Blocky stand-in models used when a manifest entry has no file (or it fails to load).
  * Each faces +Z, stands on y = 0, and uses real-world size in units.
  */
 
-const mat = (color: string, opts: THREE.MeshStandardMaterialParameters = {}) =>
-  new THREE.MeshStandardMaterial({ color, roughness: 0.75, map: propTexture(), ...opts });
+/** Creatures (pets, guardians) get a much fainter stud texture than props so their colours read cleanly. */
+let creatureLook = false;
+const withSoftStuds = (build: () => THREE.Object3D) => () => {
+  creatureLook = true;
+  try {
+    return build();
+  } finally {
+    creatureLook = false;
+  }
+};
+
+export const mat = (color: string, opts: THREE.MeshStandardMaterialParameters = {}) =>
+  new THREE.MeshStandardMaterial({ color, roughness: 0.75, map: creatureLook ? softPropTexture() : propTexture(), ...opts });
 
 const mesh = (geo: THREE.BufferGeometry, m: THREE.Material, x: number, y: number, z: number) => {
   const o = new THREE.Mesh(geo, m);
@@ -47,7 +59,7 @@ function extrudeShape(shape: THREE.Shape, depth: number, material: THREE.Materia
   return m;
 }
 
-function box(w: number, h: number, d: number, color: string | THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+export function box(w: number, h: number, d: number, color: string | THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
   const geo = new THREE.BoxGeometry(w, h, d);
   tileUVs(geo, w, h, d);
   const m = new THREE.Mesh(geo, typeof color === "string" ? mat(color) : color);
@@ -143,6 +155,58 @@ function treadmill(tier: TreadmillTier = 1): THREE.Object3D {
     g.add(beam(V(x, 2.05, 2.25), V(x, 2.05, -0.4), 0.17, accentMat));
     g.add(beam(V(x, 1.35, 1.95), V(x, 1.35, 0.4), 0.17, accentMat));
     g.add(beam(V(x, 2.05, -0.4), V(x, 1.35, 0.4), 0.14, accentMat));
+  }
+
+  // ---- extra detail (kept inside the deck footprint so it never changes where the runner stands) ----
+  const chrome = mat("#e3e7ee", { roughness: 0.2, metalness: 0.85, map: null });
+  const rubber = mat("#14161b", { roughness: 0.9, map: null });
+  const glowMat = new THREE.MeshStandardMaterial({ color: p.glow, emissive: p.glow, emissiveIntensity: 1.1, roughness: 0.4 });
+  // Chrome rollers rounding both ends of the belt, and dark rubber edge strips along it.
+  for (const z of [-2.42, 2.42]) {
+    const roller = shaded(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 1.9, 18), chrome));
+    roller.rotation.z = Math.PI / 2;
+    roller.position.set(0, 0.42, z);
+    g.add(roller);
+  }
+  for (const side of [-1, 1]) {
+    g.add(box(0.06, 0.05, 4.7, rubber, side * 0.97, 0.56, 0));
+    // Glowing light strip along the top of each side beam.
+    g.add(shaded(new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.04, 4.9), glowMat)).translateX(side * 1.1).translateY(0.575));
+    // A glowing stripe down the outer skirt, plus chunky bumper feet.
+    g.add(box(0.03, 0.09, 4.6, accentMat, side * 1.26, 0.28, 0));
+    g.add(box(0.5, 0.12, 0.55, rubber, side * 1.05, 0.06, 2.2));
+    g.add(box(0.5, 0.12, 0.55, rubber, side * 1.05, 0.06, -2.2));
+  }
+  // Console between the two uprights: a tilted body, dark bezel, a glowing scrolling screen and three buttons.
+  const consoleG = new THREE.Group();
+  consoleG.position.set(0, 2.2, 2.3);
+  consoleG.rotation.x = 0.45;
+  consoleG.add(box(1.95, 0.95, 0.32, frameMat, 0, 0, 0));
+  consoleG.add(box(1.75, 0.62, 0.06, rubber, 0, 0.12, -0.17));
+  consoleG.add(
+    shaded(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(1.55, 0.44),
+        new THREE.MeshStandardMaterial({ color: "#0b1a26", emissive: p.glow, emissiveMap: beltTexture(), emissiveIntensity: 1.2, roughness: 0.3 }),
+      ),
+    ).translateY(0.12).translateZ(-0.205).rotateY(Math.PI),
+  );
+  [p.accent, "#ff5a5a", "#5dff7a"].forEach((c, i) => {
+    consoleG.add(box(0.22, 0.12, 0.05, new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.6 }), -0.5 + i * 0.5, -0.32, -0.18));
+  });
+  g.add(consoleG);
+  // A centre stripe on the deck plate under the belt's front edge, tier-coloured.
+  g.add(box(1.9, 0.02, 0.12, accentMat, 0, 0.56, 2.3));
+  if (tier >= 3) {
+    // Vents on the back end.
+    for (let i = 0; i < 4; i++) g.add(box(0.9, 0.05, 0.05, rubber, 0, 0.18 + i * 0.09, -2.62));
+  }
+  if (tier === 4) {
+    // Gold tier: a glowing gem crowning the console.
+    const gem = shaded(new THREE.Mesh(new THREE.OctahedronGeometry(0.24), new THREE.MeshStandardMaterial({ color: "#7ff5ff", emissive: "#39e6ff", emissiveIntensity: 1.3, roughness: 0.2 })));
+    gem.position.set(0, 2.95, 2.45);
+    gem.scale.y = 1.4;
+    g.add(gem);
   }
 
   if (p.loop) {
@@ -314,7 +378,14 @@ function fuseMachine(): THREE.Object3D {
   for (const x of [-0.25, 4.65]) g.add(box(1.0, 4.1, 1.5, blue, x, 2.35, 0));
   g.add(box(5.9, 1.0, 1.6, blue, 2.2, 4.15, 0));
   g.add(prism([[-3.1, 0], [3.1, 0], [2.3, 0.65], [-2.3, 0.65]], 1.7, wedge, 2.2, 4.65, 0));
-  g.add(box(3.9, 3.7, 0.15, new THREE.MeshStandardMaterial({ map: questionTexture(), emissive: "#9fe8ff", emissiveIntensity: 1.3, roughness: 0.3 }), 2.2, 2.15, 0.35));
+  // A plain (untiled) box: box() repeats the texture per 2 units, which would put the "?" off-centre.
+  const questionScreen = new THREE.Mesh(
+    new THREE.BoxGeometry(3.9, 3.7, 0.15),
+    new THREE.MeshStandardMaterial({ map: questionTexture(), emissiveMap: questionTexture(), emissive: "#ffffff", emissiveIntensity: 0.8, roughness: 0.3 }),
+  );
+  questionScreen.position.set(2.2, 2.15, 0.35);
+  questionScreen.castShadow = questionScreen.receiveShadow = true;
+  g.add(questionScreen);
 
   // Dark dome behind the gate: stacked drum, cap, and a glowing cyan screen.
   g.add(mesh(new THREE.CylinderGeometry(2.0, 2.2, 1.4, 28), slate, 2.2, 5.7, -0.7));
@@ -369,10 +440,11 @@ function fuseMachine(): THREE.Object3D {
 
 function leaderboard(): THREE.Object3D {
   const g = new THREE.Group();
-  const blue = mat("#1e9be8", { roughness: 0.45 });
-  const deep = mat("#1479cc", { roughness: 0.45 });
-  const light = mat("#a6def7", { roughness: 0.5 });
-  const face = mat("#c4ecfc", { roughness: 0.5 });
+  // Self-lit so the board stays bright, day or night.
+  const blue = mat("#2aa8f2", { roughness: 0.45, emissive: "#2aa8f2", emissiveIntensity: 0.45 });
+  const deep = mat("#1a8ae0", { roughness: 0.45, emissive: "#1a8ae0", emissiveIntensity: 0.4 });
+  const light = mat("#b8e6fa", { roughness: 0.5, emissive: "#b8e6fa", emissiveIntensity: 0.5 });
+  const face = mat("#d6f2fe", { roughness: 0.5, emissive: "#d6f2fe", emissiveIntensity: 0.6 });
 
   // Plinth with sloped sides, and a rounded dome-shaped stem that holds the board up.
   g.add(prism([[-4, 0], [4, 0], [3.5, 0.6], [-3.5, 0.6]], 2.2, light));
@@ -398,15 +470,25 @@ function leaderboard(): THREE.Object3D {
 
 /** Held bat: grip near the origin, barrel extending up — swap for a rigged model later. */
 function bat(): THREE.Object3D {
+  // A sword (the item kind is still "bat"): grip at the origin, blade pointing +Y.
   const g = new THREE.Group();
-  const wood = mat("#c9944f", { roughness: 0.55 });
-  const grip = mat("#3a2a1a", { roughness: 0.75 });
-  const barrel = shaded(new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.045, 0.72, 10), wood));
-  barrel.position.y = 0.42;
-  g.add(barrel);
-  const handle = shaded(new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.2, 8), grip));
-  handle.position.y = 0.02;
-  g.add(handle);
+  const steel = mat("#dfe6ee", { roughness: 0.25, metalness: 0.7, emissive: "#8fb4d8", emissiveIntensity: 0.18, map: null });
+  const gold = mat("#e8b53a", { roughness: 0.35, metalness: 0.6, map: null });
+  const grip = mat("#4a2b1a", { roughness: 0.8, map: null });
+  const handle = shaded(new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.045, 0.28, 8), grip));
+  handle.position.y = 0.0;
+  const pommel = shaded(new THREE.Mesh(new THREE.SphereGeometry(0.065, 10, 8), gold));
+  pommel.position.y = -0.16;
+  const guard = shaded(new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.07, 0.11), gold));
+  guard.position.y = 0.17;
+  const blade = shaded(new THREE.Mesh(new THREE.BoxGeometry(0.13, 1.0, 0.035), steel));
+  blade.position.y = 0.7;
+  const tip = shaded(new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.22, 4), steel));
+  tip.scale.set(1, 1, 0.27); // a 4-sided cone is a diamond in x/z: flatten it into the blade's thin profile
+  tip.position.y = 1.31;
+  const fuller = shaded(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.85, 0.045), mat("#aab8c6", { roughness: 0.3, metalness: 0.6, map: null })));
+  fuller.position.y = 0.66;
+  g.add(handle, pommel, guard, blade, tip, fuller);
   return g;
 }
 
@@ -699,7 +781,18 @@ function pet(id: string): THREE.Object3D {
 }
 
 export const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
-  guardian_forest: hen,
+  guardian_forest: withSoftStuds(hen),
+  guardian_lake: swan,
+  guardian_desert: scorpion,
+  guardian_jungle: jaguar,
+  guardian_snow: yeti,
+  guardian_volcano: golem,
+  guardian_abyss: shark,
+  guardian_prehistoric: rex,
+  guardian_cosmic: voidwatcher,
+  guardian_cherry: blossomSpirit,
+  guardian_titan: titanGuardian,
+  guardian_celestial: seraph,
   nest,
   player,
   treadmill: () => treadmill(1),
@@ -719,6 +812,6 @@ export const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
 
 export function makePlaceholder(id: string): THREE.Object3D {
   if (id.startsWith("egg_")) return egg(id);
-  if (id.startsWith("pet_")) return pet(id);
+  if (id.startsWith("pet_")) return withSoftStuds(() => pet(id))();
   return (PLACEHOLDERS[id] ?? unknown)();
 }

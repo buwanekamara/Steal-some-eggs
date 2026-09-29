@@ -66,10 +66,10 @@ export function treadmillLevel(level: number): TreadmillLevel {
 // ---------------------------------------------------------------- world events
 
 export const WORLD_EVENTS = {
-  /** Seconds between the start of one night and the start of the next. */
-  nightEverySec: 300,
+  /** Seconds between the start of one night and the start of the next: a 3m 30s day plus the 30s night. */
+  nightEverySec: 240,
   /** How long a night lasts: every biome is sealed off and everyone is pulled back to the hub. */
-  nightDurationSec: 20,
+  nightDurationSec: 30,
   /** Eggs growing in the pen finish this many times faster while it's night. */
   nightGrowMult: 30,
   /** Seconds between potion spawns. Once spawned, it waits at its spot until someone claims it. */
@@ -91,7 +91,7 @@ export const PVP = {
   /** Guardians are big: their hitbox reaches this much further than a player's. */
   guardianHitPadding: 1.5,
   /** Seconds between swings (a swing that misses still uses it). */
-  cooldownSec: 3,
+  cooldownSec: 0.6,
   /** Ragdoll/stun after being hit — shorter than a guardian's catch. */
   stunSec: 1,
   knockback: { horizontal: 18, up: 12 },

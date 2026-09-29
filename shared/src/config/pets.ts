@@ -337,6 +337,14 @@ export const PEN = {
   inset: 1.8,
 } as const;
 
+/** Extra pet slots each pen upgrade adds on top of the ones you bought. */
+export const PEN_LEVEL_SLOTS = 2;
+
+/** Pet slots in use for `bought` slots (start + shop + rewards) at a pen level. */
+export function penSlotsTotal(bought: number, penLevel: number): number {
+  return bought + Math.max(0, penLevel - 1) * PEN_LEVEL_SLOTS;
+}
+
 /** Money cost of the next slot when you own `slots` slots. */
 export function slotCost(slots: number): number {
   const k = slots - PEN.startSlots;

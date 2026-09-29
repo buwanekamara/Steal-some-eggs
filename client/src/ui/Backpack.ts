@@ -58,7 +58,7 @@ export class Backpack {
         <div class="bp-tabs">
           <button data-tab="pets"><b>Pets</b><span>🐾</span></button>
           <button data-tab="eggs"><b>Eggs</b><span>🥚</span></button>
-          <button data-tab="gear"><b>Gear</b><span>🏏</span></button>
+          <button data-tab="gear"><b>Gear</b><span>🗡️</span></button>
         </div>
         <div class="bp-panel">
           <div class="bp-head">

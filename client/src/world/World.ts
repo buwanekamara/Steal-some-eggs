@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {
   BASE,
   BIOMES,
+  BIOME_TRAITS,
   CORRIDOR_END_Z,
   CORRIDOR_HALF_WIDTH,
   HUB,
@@ -14,13 +15,18 @@ import {
   SAFE_ZONE_Z,
   WALL_HEIGHT,
   basePlot,
+  offlineCashSpot,
+  penGrowth,
+  rotateOffset,
   biomeLength,
   biomeStartZ,
   formatShort,
   treadmillLevel,
 } from "@egg/shared";
 import type { ModelLibrary } from "../assets/ModelLibrary.ts";
-import { floorTexture, propTexture, wallTexture } from "../assets/textures.ts";
+import { mulberry32 } from "./random.ts";
+import { buildBiomeDecor } from "./BiomeDecor.ts";
+import { floorTexture, propTexture, tileBoxUVs, tileInstancedUVs, wallTexture } from "../assets/textures.ts";
 import { FONT, PlaneLabel, TextLabel, textPlane } from "../ui/labels.ts";
 
 const HUB_FLOOR = "#63d434";
@@ -37,6 +43,9 @@ interface BaseVisual {
   railMat: THREE.MeshStandardMaterial;
   postMat: THREE.MeshStandardMaterial;
   penLevel: number;
+  /** Floor and fence pieces, rebuilt when an upgrade pushes the back of the pen out. */
+  padMesh: THREE.Mesh;
+  fenceMeshes: THREE.Object3D[];
   /** "Upgrade / Level 1 > Level 2 / $1K" boards (text only shown to the owner's own base). */
   treadmillSign: PlaneLabel;
   penSign: PlaneLabel;
@@ -170,6 +179,167 @@ function makeSkyTexture(night: boolean): THREE.CanvasTexture {
   return tex;
 }
 
+/** GTA-style cash: a pyramid of banded bundles of bills with a few loose notes on top, plus a green-gold glow. */
+function buildCashPile(): THREE.Group {
+  const bill = (() => {
+    const c = document.createElement("canvas");
+    c.width = 256;
+    c.height = 128;
+    const g = c.getContext("2d")!;
+    g.fillStyle = "#7fb675";
+    g.fillRect(0, 0, 256, 128);
+    g.strokeStyle = "#2f6b3a";
+    g.lineWidth = 6;
+    g.strokeRect(8, 8, 240, 112);
+    g.lineWidth = 2;
+    g.strokeRect(20, 20, 216, 88);
+    g.fillStyle = "#3e8a4a";
+    g.beginPath();
+    g.ellipse(128, 64, 34, 34, 0, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = "#e9f7dc";
+    g.font = "700 46px Arial, sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("$", 128, 66);
+    g.font = "700 22px Arial, sans-serif";
+    g.fillText("100", 44, 34);
+    g.fillText("100", 212, 94);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  // Bright, slightly see-through: emissive lifts the colour and the opacity lets the glow show through.
+  const glass = { transparent: true, opacity: 0.78, depthWrite: false } as const;
+  const face = new THREE.MeshStandardMaterial({ map: bill, emissiveMap: bill, roughness: 0.5, emissive: "#ffffff", emissiveIntensity: 0.75, ...glass });
+  const edge = new THREE.MeshStandardMaterial({ color: "#eaffe0", roughness: 0.6, emissive: "#9fe89a", emissiveIntensity: 0.7, ...glass });
+  const band = new THREE.MeshStandardMaterial({ color: "#ffe9a0", roughness: 0.5, emissive: "#ffd84a", emissiveIntensity: 0.7, ...glass });
+  const bundle = (): THREE.Group => {
+    const b = new THREE.Group();
+    // Box face order: +x, -x, +y, -y, +z, -z. Top/bottom show the note; sides show the paper edges.
+    b.add(new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.9, 1.6), [edge, edge, face, face, edge, edge]));
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.96, 1.66), band);
+    b.add(strap);
+    return b;
+  };
+  const body = new THREE.Group();
+  const place = (x: number, y: number, z: number, ry: number) => {
+    const b = bundle();
+    b.position.set(x, y, z);
+    b.rotation.y = ry;
+    body.add(b);
+  };
+  place(-1.7, 0.45, 0.9, 0.05);
+  place(1.7, 0.45, 0.9, -0.05);
+  place(0, 0.45, -1.1, 0.03);
+  place(-0.5, 1.35, 0.2, 0.35);
+  place(0.9, 1.35, -0.4, -0.3);
+  place(0, 2.25, 0, 0.8);
+  // A couple of loose notes fanned on top.
+  for (let i = 0; i < 3; i++) {
+    const n = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.03, 0.8), [edge, edge, face, face, edge, edge]);
+    n.position.set(i * 0.5 - 0.5, 2.75 + i * 0.03, 0.1);
+    n.rotation.y = 0.5 * i - 0.3;
+    body.add(n);
+  }
+  body.traverse((o) => {
+    o.castShadow = true;
+  });
+  const glow = glowSprite("#8dff5a", 14, 0.75);
+  glow.position.y = 4;
+  const root = new THREE.Group();
+  root.add(body, glow);
+  root.userData = { body, glow };
+  return root;
+}
+
+/** The leaderboard's black screen: rounded white rows with an avatar chip, the name and a green "Money/s:" tag, like the reference. */
+class LeaderboardScreen {
+  readonly mesh: THREE.Mesh;
+  private canvas = document.createElement("canvas");
+  private tex: THREE.CanvasTexture;
+  private rows: { name: string; income: number }[] = [];
+  private key = "";
+
+  constructor() {
+    this.canvas.width = 520;
+    this.canvas.height = 640;
+    this.tex = new THREE.CanvasTexture(this.canvas);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.anisotropy = 8;
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 6.4), new THREE.MeshBasicMaterial({ map: this.tex, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    this.mesh.rotation.y = Math.PI; // faces -z, toward the hub
+    this.draw();
+    document.fonts?.ready.then(() => this.draw());
+  }
+
+  setRows(rows: { name: string; income: number }[]) {
+    const key = JSON.stringify(rows);
+    if (key === this.key) return;
+    this.key = key;
+    this.rows = rows;
+    this.draw();
+  }
+
+  private draw() {
+    const g = this.canvas.getContext("2d")!;
+    const W = this.canvas.width;
+    g.fillStyle = "#0b0d12";
+    g.fillRect(0, 0, W, this.canvas.height);
+    const rr = (x: number, y: number, w: number, h: number, r: number) => {
+      g.beginPath();
+      g.roundRect(x, y, w, h, r);
+    };
+    const rowH = 66;
+    const gap = 8;
+    g.textBaseline = "middle";
+    if (!this.rows.length) {
+      g.fillStyle = "#cfd6e4";
+      g.font = `700 36px ${FONT}`;
+      g.textAlign = "center";
+      g.fillText("Nobody yet…", W / 2, this.canvas.height / 2);
+    }
+    this.rows.slice(0, 8).forEach((r, i) => {
+      const y = 16 + i * (rowH + gap);
+      rr(16, y, W - 32, rowH, 12);
+      g.fillStyle = i === 0 ? "#fff3c4" : "#f3f4f8";
+      g.fill();
+      // Avatar chip: coloured square with the initial.
+      let h = 0;
+      for (const ch of r.name) h = (h * 31 + ch.charCodeAt(0)) % 360;
+      rr(26, y + 9, 48, 48, 8);
+      g.fillStyle = `hsl(${h} 70% 55%)`;
+      g.fill();
+      g.fillStyle = "#ffffff";
+      g.font = `700 30px ${FONT}`;
+      g.textAlign = "center";
+      g.fillText((r.name[0] ?? "?").toUpperCase(), 50, y + 34);
+      // Name, clipped so a long name never runs under the tag.
+      g.save();
+      g.beginPath();
+      g.rect(84, y, 208, rowH);
+      g.clip();
+      g.fillStyle = "#111318";
+      g.font = `700 32px ${FONT}`;
+      g.textAlign = "left";
+      g.fillText(r.name, 84, y + rowH / 2 + 2);
+      g.restore();
+      // "Money/s:" tag and the value under it.
+      rr(304, y + 6, 118 + 60, 24, 6);
+      g.fillStyle = "#1fd6a0";
+      g.fill();
+      g.fillStyle = "#ffffff";
+      g.font = `700 18px ${FONT}`;
+      g.textAlign = "center";
+      g.fillText("Money/s:", 304 + 89, y + 19);
+      g.fillStyle = "#111318";
+      g.font = `700 26px ${FONT}`;
+      g.fillText(`$${formatShort(r.income)}`, 304 + 89, y + 46);
+    });
+    this.tex.needsUpdate = true;
+  }
+}
+
 /** Soft additive radial glow, billboarded; used to make pickups shine a little. */
 function glowSprite(color: string, size: number, opacity: number): THREE.Sprite {
   const c = document.createElement("canvas");
@@ -203,6 +373,10 @@ export class World {
   private skyMat!: THREE.ShaderMaterial;
   private cloudMat!: THREE.MeshLambertMaterial;
   private nightTarget = 0;
+  private serverNight = false;
+  private biomeNight = false;
+  private biomeFog = new THREE.Color("#bfe3ff");
+  private biomeFogTarget = new THREE.Color("#bfe3ff");
   private nightMix = 0;
   private static readonly DAY_FOG = new THREE.Color("#bfe3ff");
   private static readonly NIGHT_FOG = new THREE.Color("#070b1f");
@@ -211,7 +385,16 @@ export class World {
 
   /** Fades the sky, fog and lighting between day and night. */
   setNight(on: boolean) {
-    this.nightTarget = on ? 1 : 0;
+    this.serverNight = on;
+    this.nightTarget = on || this.biomeNight ? 1 : 0;
+  }
+
+  /** Blends the fog toward the biome the player is in (null = hub); night-themed biomes (Cosmic) darken the sky too. */
+  setAtmosphere(biomeId: string | null) {
+    const b = biomeId ? BIOMES.find((x) => x.id === biomeId) : null;
+    this.biomeFogTarget.set((biomeId && BIOME_TRAITS[biomeId]?.fog) || "#bfe3ff");
+    this.biomeNight = b?.sky === "night";
+    this.nightTarget = this.serverNight || this.biomeNight ? 1 : 0;
   }
 
   private applyNight(dt: number) {
@@ -220,7 +403,6 @@ export class World {
     this.nightMix += Math.sign(d) * Math.min(Math.abs(d), dt / 0.8); // ~0.8s fade
     const n = this.nightMix;
     this.skyMat.uniforms.night.value = n;
-    (this.scene.fog as THREE.Fog).color.copy(World.DAY_FOG).lerp(World.NIGHT_FOG, n);
     this.hemi.intensity = 1.4 - 1.0 * n;
     this.sun.intensity = 2.6 - 2.1 * n;
     this.sun.color.copy(World.DAY_SUN).lerp(World.NIGHT_SUN, n);
@@ -240,6 +422,7 @@ export class World {
     this.buildTorches();
     this.buildNests();
     this.buildForestDecor();
+    buildBiomeDecor(this.scene);
     this.arrow = this.buildArrow();
   }
 
@@ -275,7 +458,7 @@ export class World {
     }
     const cube = new THREE.BoxGeometry(1, 1, 1);
     const add = (list: THREE.Matrix4[], color: string) => {
-      const mesh = new THREE.InstancedMesh(cube, new THREE.MeshStandardMaterial({ color, map: propTexture(), roughness: 0.9 }), list.length);
+      const mesh = new THREE.InstancedMesh(cube, tileInstancedUVs(new THREE.MeshStandardMaterial({ color, map: propTexture(), roughness: 0.9 }), [1, 1, 1]), list.length);
       list.forEach((mat, k) => mesh.setMatrixAt(k, mat));
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -290,7 +473,15 @@ export class World {
   update(dt: number) {
     this.time += dt;
     this.applyNight(dt);
+    this.biomeFog.lerp(this.biomeFogTarget, Math.min(1, dt * 1.5));
+    (this.scene.fog as THREE.Fog).color.copy(this.biomeFog).lerp(World.NIGHT_FOG, this.nightMix);
     this.animateTorches();
+    if (this.offlineCash?.visible) {
+      const c = this.offlineCash;
+      c.userData.body.position.y = 2.6 + Math.sin(this.time * 2) * 0.35;
+      c.userData.body.rotation.y += dt * 1.1;
+      c.userData.glow.material.opacity = 0.65 + 0.15 * Math.sin(this.time * 3);
+    }
     for (const [i, gl] of this.glows.entries()) gl.material.opacity = gl.userData.baseOpacity * (0.8 + 0.2 * Math.sin(this.time * 2.5 + i * 2));
     for (const t of this.beltMaps) t.offset.y -= dt * 1.6;
     for (const [i, pad] of this.pads.entries()) pad.scale.setScalar(1 + Math.sin(this.time * 3 + i) * 0.06);
@@ -321,6 +512,7 @@ export class World {
     if (b.treadmill) this.scene.remove(b.treadmill);
     const tm = this.lib.instance(`treadmillTier${treadmillLevel(level).tier}`);
     tm.position.set(plot.treadmill.x, 0, plot.treadmill.z);
+    tm.rotation.y = plot.rotY; // the runner faces the pen's front
     tm.traverse((o) => {
       const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
       if (m?.emissiveMap) this.beltMaps.add(m.emissiveMap);
@@ -370,7 +562,8 @@ export class World {
       (b.floorName.material as THREE.MeshBasicMaterial).map?.dispose();
     }
     b.floorName = textPlane(name ? `${name}'s Base` : "Empty Base", 9, name ? "#ffffff" : "#d9f5c8", name ? "#111111" : "#3b7a28");
-    b.floorName.rotation.x = -Math.PI / 2;
+    b.floorName.rotation.order = "YXZ";
+    b.floorName.rotation.set(-Math.PI / 2, basePlot(index).rotY, 0);
     b.floorName.position.set(b.x, 0.05, b.z);
     this.scene.add(b.floorName);
     b.floatingName.setLines(name ?? "");
@@ -443,12 +636,15 @@ export class World {
   /** Wall slab along X (alongZ = false) or along Z (alongZ = true), with a colored top edge. */
   private wall(length: number, x: number, z: number, alongZ: boolean, color: string, top: string) {
     const t = 2;
-    const geo = alongZ ? new THREE.BoxGeometry(t, WALL_HEIGHT, length) : new THREE.BoxGeometry(length, WALL_HEIGHT, t);
-    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, map: wallTexture(length, WALL_HEIGHT), roughness: 0.95 }));
+    const [bw, bd] = alongZ ? [t, length] : [length, t];
+    // One wall-texture tile = 8 units on every face (repeat 1 + face-sized UVs), so the thin ends and top aren't stretched.
+    const geo = tileBoxUVs(new THREE.BoxGeometry(bw, WALL_HEIGHT, bd), bw, WALL_HEIGHT, bd, 8);
+    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, map: wallTexture(8, 8), roughness: 0.95 }));
     m.position.set(x, WALL_HEIGHT / 2, z);
     m.receiveShadow = true;
     this.scene.add(m);
-    const edgeGeo = alongZ ? new THREE.BoxGeometry(t + 0.6, 1.4, length) : new THREE.BoxGeometry(length, 1.4, t + 0.6);
+    const [ew, ed] = alongZ ? [t + 0.6, length] : [length, t + 0.6];
+    const edgeGeo = tileBoxUVs(new THREE.BoxGeometry(ew, 1.4, ed), ew, 1.4, ed);
     const edge = new THREE.Mesh(edgeGeo, new THREE.MeshStandardMaterial({ color: top, map: propTexture() }));
     edge.position.set(x, WALL_HEIGHT + 0.7, z);
     this.scene.add(edge);
@@ -478,12 +674,13 @@ export class World {
       new THREE.PlaneGeometry(W, D),
       new THREE.MeshStandardMaterial({ color: "#72ea3c", map: floorTexture(W, D), roughness: 0.9 }),
     );
-    pad.rotation.x = -Math.PI / 2;
+    pad.rotation.order = "YXZ"; // turn about the vertical axis after lying flat
+    pad.rotation.set(-Math.PI / 2, plot.rotY, 0);
     pad.position.set(cx, 0.02, cz);
     pad.receiveShadow = true;
     this.scene.add(pad);
 
-    const { railMat, postMat } = this.buildFence(cx, cz, W, D);
+    const { railMat, postMat, meshes: fenceMeshes } = this.buildFence(cx, cz, W, D, plot.rotY, 0);
 
     // Spawn pad.
     const spawn = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 0.12, 24), new THREE.MeshStandardMaterial({ color: "#ffffff", emissive: "#7fd7ff", emissiveIntensity: 0.4 }));
@@ -492,7 +689,8 @@ export class World {
 
     // "+N/step" label above the treadmill (the model itself is placed by setTreadmillLevel).
     const stepLabel = new TextLabel("", { lineHeight: 1 });
-    stepLabel.position.set(plot.treadmill.x, 3.4, plot.treadmill.z + 1.5);
+    const stepOff = rotateOffset(plot.rotY, 0, 1.5);
+    stepLabel.position.set(plot.treadmill.x + stepOff.x, 3.4, plot.treadmill.z + stepOff.z);
     this.scene.add(stepLabel);
 
     const floatingName = new TextLabel("", { lineHeight: 2.2 });
@@ -500,8 +698,8 @@ export class World {
     floatingName.visible = false;
     this.scene.add(floatingName);
 
-    const treadmillSign = this.signBoard(plot.treadmillSign.x, plot.treadmillSign.z, 0);
-    const penSign = this.signBoard(plot.penSign.x, plot.penSign.z, Math.PI);
+    const treadmillSign = this.signBoard(plot.treadmillSign.x, plot.treadmillSign.z, plot.rotY);
+    const penSign = this.signBoard(plot.penSign.x, plot.penSign.z, Math.PI + plot.rotY);
     this.bases[index] = {
       x: plot.sign.x,
       z: plot.sign.z,
@@ -513,6 +711,8 @@ export class World {
       railMat,
       postMat,
       penLevel: 0,
+      padMesh: pad,
+      fenceMeshes,
       treadmillSign,
       penSign,
     };
@@ -526,9 +726,9 @@ export class World {
   private signBoard(x: number, z: number, facing: number): PlaneLabel {
     const g = new THREE.Group();
     const dark = new THREE.MeshStandardMaterial({ color: "#1f2433", map: propTexture(), roughness: 0.6 });
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.6, 0.3), dark);
+    const post = new THREE.Mesh(tileBoxUVs(new THREE.BoxGeometry(0.3, 1.6, 0.3), 0.3, 1.6, 0.3), dark);
     post.position.y = 0.8;
-    const board = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.5, 0.25), dark);
+    const board = new THREE.Mesh(tileBoxUVs(new THREE.BoxGeometry(2.8, 1.5, 0.25), 2.8, 1.5, 0.25), dark);
     board.position.y = 2.2;
     for (const m of [post, board]) {
       m.castShadow = true;
@@ -557,6 +757,41 @@ export class World {
     b.railMat.emissive.set(level >= 5 ? lv.rail : "#000000");
     b.railMat.emissiveIntensity = level >= 5 ? 0.25 : 0;
     b.penLevel = level;
+    this.resizePen(index, level);
+  }
+
+  /** Upgrades push the back fence out: rebuilds the fence and floor for the new depth (the gate side stays put). */
+  private resizePen(index: number, level: number) {
+    const b = this.bases[index];
+    if (!b) return;
+    const plot = basePlot(index);
+    const grow = penGrowth(level);
+    const W = BASE.penWidth;
+    const D = BASE.penDepth + grow;
+    const off = rotateOffset(plot.rotY, 0, -grow / 2); // the pen's middle slides back by half the growth
+    b.padMesh.geometry.dispose();
+    b.padMesh.geometry = new THREE.PlaneGeometry(W, D);
+    (b.padMesh.material as THREE.MeshStandardMaterial).map = floorTexture(W, D);
+    (b.padMesh.material as THREE.MeshStandardMaterial).needsUpdate = true;
+    b.padMesh.position.set(plot.cx + off.x, 0.02, plot.cz + off.z);
+    for (const m of b.fenceMeshes) {
+      this.scene.remove(m);
+      (m as THREE.InstancedMesh).geometry.dispose();
+      (m as THREE.InstancedMesh).dispose();
+    }
+    const built = this.buildFence(plot.cx, plot.cz, W, BASE.penDepth, plot.rotY, grow);
+    // Keep the colors the level set on the old materials.
+    built.railMat.color.copy(b.railMat.color);
+    built.postMat.color.copy(b.postMat.color);
+    built.railMat.metalness = b.railMat.metalness;
+    built.railMat.roughness = b.railMat.roughness;
+    built.railMat.emissive.copy(b.railMat.emissive);
+    built.railMat.emissiveIntensity = b.railMat.emissiveIntensity;
+    b.railMat.dispose();
+    b.postMat.dispose();
+    b.railMat = built.railMat;
+    b.postMat = built.postMat;
+    b.fenceMeshes = built.meshes;
   }
 
   /** Refreshes both Upgrade boards of a base. `owned` hides prices on other players' bases. */
@@ -593,10 +828,11 @@ export class World {
   }
 
   /** Wooden X-braced fence around a pen, with a gate gap in the front (+Z) side. Colors come from the pen level. */
-  private buildFence(cx: number, cz: number, W: number, D: number) {
+  /** `grow` extends the back of the pen (local -z) by that many units; the gate side stays put. */
+  private buildFence(cx: number, cz: number, W: number, D: number, rotY = 0, grow = 0) {
     const posts: THREE.Matrix4[] = [];
     const rails: THREE.Matrix4[] = [];
-    const postGeo = new THREE.BoxGeometry(0.6, 2.6, 0.6);
+    const postGeo = tileBoxUVs(new THREE.BoxGeometry(0.6, 2.6, 0.6), 0.6, 2.6, 0.6);
     const railGeo = new THREE.BoxGeometry(1, 0.28, 0.28); // unit length along X
     const X = new THREE.Vector3(1, 0, 0);
 
@@ -633,27 +869,30 @@ export class World {
         rail(new THREE.Vector3(x, hi, z), new THREE.Vector3(nx, lo, nz));
       }
     };
-    const x0 = cx - W / 2;
-    const x1 = cx + W / 2;
-    const z0 = cz - D / 2;
-    const z1 = cz + D / 2;
+    // Built around the origin (gate toward +z); the meshes are then moved to the pen and turned with it.
+    const x0 = -W / 2;
+    const x1 = W / 2;
+    const z0 = -D / 2 - grow;
+    const z1 = D / 2;
     side(x0, z0, x1, z0);
     side(x1, z0, x1, z1);
     side(x1, z1, x0, z1, 6);
     side(x0, z1, x0, z0);
 
     const postMat = new THREE.MeshStandardMaterial({ color: PEN_LEVELS[0].post, map: propTexture() });
-    const railMat = new THREE.MeshStandardMaterial({ color: PEN_LEVELS[0].rail, map: propTexture() });
+    const railMat = tileInstancedUVs(new THREE.MeshStandardMaterial({ color: PEN_LEVELS[0].rail, map: propTexture() }), [1, 0.28, 0.28]); // rails are scaled to length per instance
     const postMesh = new THREE.InstancedMesh(postGeo, postMat, posts.length);
     posts.forEach((m, i) => postMesh.setMatrixAt(i, m));
     const railMesh = new THREE.InstancedMesh(railGeo, railMat, rails.length);
     rails.forEach((m, i) => railMesh.setMatrixAt(i, m));
     for (const m of [postMesh, railMesh]) {
+      m.position.set(cx, 0, cz);
+      m.rotation.y = rotY;
       m.castShadow = true;
       m.receiveShadow = true;
       this.scene.add(m);
     }
-    return { railMat, postMat };
+    return { railMat, postMat, meshes: [postMesh, railMesh] as THREE.Object3D[] };
   }
 
   private buildHubBuildings() {
@@ -663,6 +902,7 @@ export class World {
       obj.scale.setScalar(scale);
       obj.rotation.y = Math.PI; // face the bases
       this.scene.add(obj);
+      if (!label) return;
       const tag = new TextLabel([{ text: label, color }], { lineHeight: 2 });
       tag.position.set(x, 9 * scale, z);
       tag.scale.setScalar(scale);
@@ -671,16 +911,23 @@ export class World {
     place("sellStall", HUB_BUILDINGS.sell.x, HUB_BUILDINGS.sell.z, "SELL", "#ff3b30", SHOP_SCALE);
     place("fuseMachine", HUB_BUILDINGS.fuse.x, HUB_BUILDINGS.fuse.z, "Fuse Machine", "#2fb5ff");
     place("trailsShop", HUB_BUILDINGS.trails.x, HUB_BUILDINGS.trails.z, "TRAILS SHOP", "#ffd21f", SHOP_SCALE);
-    place("leaderboard", HUB_BUILDINGS.leaderboard.x, HUB_BUILDINGS.leaderboard.z, "MOST MONEY/s", "#7dff4a", LEADERBOARD_SCALE);
+    place("leaderboard", HUB_BUILDINGS.leaderboard.x, HUB_BUILDINGS.leaderboard.z, "", "#7dff4a", LEADERBOARD_SCALE); // title + rows are printed on the board itself
     place("chest", HUB_BUILDINGS.chest.x, HUB_BUILDINGS.chest.z, "FREE CHEST", "#ffb020");
     const chestGlow = glowSprite("#ffb020", 9, 0.45);
     chestGlow.position.set(HUB_BUILDINGS.chest.x, 2.2, HUB_BUILDINGS.chest.z);
     this.scene.add(chestGlow);
     this.glows.push(chestGlow);
-    this.leaderboardLabel = new TextLabel([{ text: "…", color: "#ffffff" }], { lineHeight: 1.4 });
-    this.leaderboardLabel.position.set(HUB_BUILDINGS.leaderboard.x, 5.0 * LEADERBOARD_SCALE, HUB_BUILDINGS.leaderboard.z - 0.6 * LEADERBOARD_SCALE); // in front of the screen (the model faces -z)
-    this.leaderboardLabel.scale.setScalar(LEADERBOARD_SCALE);
-    this.scene.add(this.leaderboardLabel);
+    // Title printed on the board's header plate and a screen of ranked rows: both flat on the model (which faces -z).
+    const lb = HUB_BUILDINGS.leaderboard;
+    const title = textPlane("MOST MONEY/s", 5.6, "#62ff2e", "#0f6b1c");
+    title.rotation.y = Math.PI;
+    title.scale.setScalar(LEADERBOARD_SCALE);
+    title.position.set(lb.x, 9.32 * LEADERBOARD_SCALE, lb.z - 0.72 * LEADERBOARD_SCALE);
+    this.scene.add(title);
+    this.leaderboardScreen = new LeaderboardScreen();
+    this.leaderboardScreen.mesh.scale.setScalar(LEADERBOARD_SCALE);
+    this.leaderboardScreen.mesh.position.set(lb.x, 5.25 * LEADERBOARD_SCALE, lb.z - 0.56 * LEADERBOARD_SCALE); // the screen box's face is at 0.47: clear it so the two never z-fight
+    this.scene.add(this.leaderboardScreen.mesh);
     // Glowing pads in front of the stalls: stand here to use them (reference: SELL = green circle, TRAILS = yellow).
     for (const [b, color] of [
       [HUB_BUILDINGS.sell, "#4ce11f"],
@@ -714,7 +961,26 @@ export class World {
   }
 
   private potionPickup!: THREE.Object3D;
-  private leaderboardLabel!: TextLabel;
+
+  /** Big floating stack of cash in your pen holding the offline earnings (null hides it). Walk into it to collect. */
+  setOfflineCash(baseIndex: number, amount: number | null) {
+    if (!this.offlineCash) {
+      this.offlineCash = buildCashPile();
+      this.scene.add(this.offlineCash);
+      this.offlineCashLabel = new TextLabel("", { lineHeight: 1.6 });
+      this.scene.add(this.offlineCashLabel);
+    }
+    this.offlineCash.visible = this.offlineCashLabel!.visible = !!amount;
+    if (!amount) return;
+    const spot = offlineCashSpot(baseIndex);
+    this.offlineCash.position.set(spot.x, 0, spot.z);
+    this.offlineCashLabel!.position.set(spot.x, 7.5, spot.z);
+    this.offlineCashLabel!.setLines([
+      { text: `$${formatShort(amount)}`, color: "#7dff4a", size: 1.2 },
+      { text: "while you were away", color: "#ffffff", size: 0.5 },
+    ]);
+  }
+  private leaderboardScreen!: LeaderboardScreen;
 
   /** Toggles the potion pickup: visible once spawned, hidden after someone claims it. */
   setPotionAvailable(available: boolean) {
@@ -723,10 +989,7 @@ export class World {
 
   /** Refreshes the "MOST MONEY/s" board with the current top earners (called a few times a second). */
   setLeaderboard(rows: { name: string; income: number }[]) {
-    const lines = rows.length
-      ? rows.map((r, i) => ({ text: `${i + 1}. ${r.name} — $${formatShort(r.income)}/s`, color: i === 0 ? "#ffd21f" : "#eaffea", size: i === 0 ? 0.85 : 0.72 }))
-      : [{ text: "Nobody yet…", color: "#cccccc", size: 0.72 }];
-    this.leaderboardLabel.setLines(lines);
+    this.leaderboardScreen.setRows(rows);
   }
 
   private buildSafeZone() {
@@ -740,6 +1003,8 @@ export class World {
     this.scene.add(text);
   }
 
+  private offlineCash: THREE.Group | null = null;
+  private offlineCashLabel: TextLabel | null = null;
   private torches: { flame: THREE.Sprite; halo: THREE.Sprite; light: THREE.PointLight; seed: number; power: number }[] = [];
 
   /** Four torches along the night wall: unlit by day, they ignite at night and light up the safe zone. */
@@ -771,7 +1036,8 @@ export class World {
     // One beside each pen, at the front corner facing the corridor.
     for (let i = 0; i < BASE.count; i++) {
       const p = basePlot(i);
-      this.addTorch(p.cx + BASE.penWidth / 2 + 1.3, p.cz + BASE.penDepth / 2 + 0.5, wood, iron, flameTex, 26, 55);
+      const o = rotateOffset(p.rotY, BASE.penWidth / 2 + 1.3, BASE.penDepth / 2 + 0.5);
+      this.addTorch(p.cx + o.x, p.cz + o.z, wood, iron, flameTex, 26, 55);
     }
   }
 
@@ -864,10 +1130,10 @@ export class World {
 
       // Soft-gate sign at the start of every biome after the first.
       if (i > 0) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.4, 2.3, 0.4), new THREE.MeshStandardMaterial({ color: "#c96b1c", map: propTexture() }));
+        const post = new THREE.Mesh(tileBoxUVs(new THREE.BoxGeometry(0.4, 2.3, 0.4), 0.4, 2.3, 0.4), new THREE.MeshStandardMaterial({ color: "#c96b1c", map: propTexture() }));
         // The post stops at the board's bottom edge so it can't cover the printed text.
         post.position.set(-CORRIDOR_HALF_WIDTH + 6, 1.15, z0 + 3);
-        const board = new THREE.Mesh(new THREE.BoxGeometry(5, 2, 0.4), new THREE.MeshStandardMaterial({ color: "#e8872c", map: propTexture() }));
+        const board = new THREE.Mesh(tileBoxUVs(new THREE.BoxGeometry(5, 2, 0.4), 5, 2, 0.4), new THREE.MeshStandardMaterial({ color: "#e8872c", map: propTexture() }));
         board.position.y = 2.15;
         post.add(board);
         // The speed recommendation is printed on the board's face toward the hub (where players approach from).
@@ -900,15 +1166,4 @@ export class World {
       this.scene.add(ring);
     });
   }
-}
-
-/** Small deterministic RNG so decoration layout is the same for everyone. */
-function mulberry32(seed: number) {
-  return () => {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
 }

@@ -17,6 +17,11 @@ import {
   clampToWorld,
   groundHeightAt,
   inPen,
+  BIOME_TRAITS,
+  biomeAt,
+  BIOMES,
+  OFFLINE_CASH_GRAB_RADIUS,
+  offlineCashSpot,
   petDisplayName,
   trailMult,
   walkSpeedFromStat,
@@ -28,6 +33,7 @@ import {
   type UseMsg,
 } from "@egg/shared";
 import type { ModelLibrary } from "../assets/ModelLibrary.ts";
+import { music } from "../audio/Music.ts";
 import { sfx } from "../audio/Sfx.ts";
 import { Avatar } from "../entities/Avatar.ts";
 import { RemotePlayer } from "../entities/RemotePlayer.ts";
@@ -131,7 +137,21 @@ export class Game {
   private pickedSlot = -1;
   private backpack: Backpack;
 
+  private biomeId = "";
+  private isNightNow = false;
+  private offlineCash = 0;
+  private offlineCashSent = false;
+
   constructor(private canvas: HTMLCanvasElement, private ui: HTMLElement, private lib: ModelLibrary) {
+    // Every button press in the UI gets a soft click (hotbar slots have their own selection tick).
+    ui.addEventListener(
+      "click",
+      (e) => {
+        const t = e.target as HTMLElement;
+        if (t.closest("button, [data-act], [data-tab], [data-gfx], [data-sound], .inv-btn, .claim-btn") && !t.closest(".hb-slot")) sfx.menu();
+      },
+      true,
+    );
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -233,6 +253,7 @@ export class Game {
     const client = new Client(serverUrl());
     const options: JoinOptions = { name, profileId: getProfileId() };
     this.room = await client.joinOrCreate(ROOM_NAME, options);
+    sfx.hushUntil = performance.now() + 3000; // things that already exist on join stay quiet
     const room = this.room;
     const cb = Callbacks.get(room);
 
@@ -268,8 +289,14 @@ export class Game {
         let lastSpeed = p.speedStat;
         let lastMoney = p.money;
         this.applyMyStats(p);
-        this.hud.showOfflineClaim(p.offlineEarnings > 0 ? p.offlineEarnings : null);
-        cb.listen(p, "offlineEarnings", (v: number) => this.hud.showOfflineClaim(v > 0 ? v : null));
+        // Offline earnings float as a pile of cash in your pen; walking into it collects them.
+        const cash = (v: number) => {
+          this.offlineCash = v > 0 ? v : 0;
+          this.offlineCashSent = false;
+          this.world.setOfflineCash(p.baseIndex, this.offlineCash || null);
+        };
+        cash(p.offlineEarnings);
+        cb.listen(p, "offlineEarnings", cash);
         const held = () => {
           this.myAvatar?.setHeld(p.equipped, p.equippedModel);
           this.input.setUseButton(p.equipped);
@@ -317,6 +344,7 @@ export class Game {
     this.hub.bind(room);
     // Fusion makes an egg (the toast says which slot it went to); it's revealed properly when it hatches.
     room.onMessage(MSG.Fused, (_m: FusedMsg) => sfx.secured());
+    room.onMessage(MSG.Swing, (id: string) => (id === room.sessionId ? this.myAvatar : this.remotes.get(id)?.avatar)?.swing());
     room.onMessage(MSG.Cooldown, (m: CooldownMsg) => {
       this.hud.startCooldown(m.kind, m.sec);
       if (m.kind === "bat") sfx.swing(); // the server accepted the swing
@@ -329,6 +357,8 @@ export class Game {
     cb.listen("isNight", (isNight: boolean) => {
       timers();
       this.world.setNightBarrier(isNight);
+      this.me.nightLock = isNight;
+      this.isNightNow = isNight;
       this.world.setNight(isNight);
       this.hud.showNightBanner(isNight);
     });
@@ -433,12 +463,12 @@ export class Game {
     this.trapPreview.update(holdingTrap, this.me.pos, this.me.ry, (x, z) => this.trapSpotOk(x, z));
 
     const key = this.input.isTouch ? "" : "[F] ";
-    const inMyPen = inPen(p.baseIndex, this.me.pos.x, this.me.pos.z, PEN.inset);
+    const inMyPen = inPen(p.baseIndex, this.me.pos.x, this.me.pos.z, PEN.inset, p.penLevel);
     let action: string | null = null;
     if (this.backpack.isOpen) action = this.pickedSlot >= 0 ? "Click another slot to swap" : "Drag items onto your hotbar";
     else if (p.equipped === "bat") {
       const cd = this.hud.cooldownLeft("bat");
-      action = cd > 0 ? `Bat ready in ${cd.toFixed(1)}s` : this.me.pos.z < SAFE_ZONE_Z ? "No swinging in the safe zone" : `${key}Swing bat`;
+      action = cd > 0 ? `Sword ready in ${cd.toFixed(1)}s` : this.me.pos.z < SAFE_ZONE_Z ? "No swinging in the safe zone" : `${key}Swing sword`;
     } else if (p.equipped === "trap") action = this.trapPreview.valid ? `${key}Place bear trap` : "Can't place a trap here";
     else if (p.equipped === "egg") action = inMyPen ? `${key}Place egg in your pen` : "Walk into your pen to place this egg";
     else if (p.equipped === "pet") action = inMyPen ? `${key}Place pet in your pen` : "Walk into your pen to place this pet";
@@ -490,7 +520,7 @@ export class Game {
     }
     // Egg tasks first: they're the next step whenever they apply.
     if (this.pen.readyEggs > 0) return this.hud.setHint("An egg is ready! Walk up to it and hold E to hatch 🐣");
-    if (p.eggCount > 0 && this.pen.usedSlots < (this.pen.inv?.slots ?? 0)) {
+    if (p.eggCount > 0 && this.pen.growingCount < (this.pen.inv?.slots ?? 0)) {
       this.world.pointAtTreadmill(-1);
       if (p.equipped === "egg") {
         return this.hud.setHint(this.input.isTouch ? "Walk into your pen and tap ✋ to place your egg 🥚" : "Walk into your pen and press F to place your egg 🥚");
@@ -584,6 +614,26 @@ export class Game {
       this.myAvatar.root.rotation.y = this.me.ry;
       this.myAvatar.update(dt, this.me.anim, this.me.speed);
     }
+    if (this.offlineCash > 0 && !this.offlineCashSent && this.myView) {
+      const spot = offlineCashSpot(this.myView.baseIndex);
+      if (Math.hypot(this.me.pos.x - spot.x, this.me.pos.z - spot.z) < OFFLINE_CASH_GRAB_RADIUS) {
+        this.offlineCashSent = true;
+        this.room?.send(MSG.ClaimOffline);
+        sfx.good();
+      }
+    }
+    sfx.listener.x = this.me.pos.x;
+    sfx.listener.z = this.me.pos.z;
+    const here = this.myView ? biomeAt(this.me.pos.z) : null; // (before joining the position is still 0,0,0, which reads as the Forest)
+    if ((here?.id ?? "") !== this.biomeId) {
+      this.biomeId = here?.id ?? "";
+      this.world.setAtmosphere(here?.id ?? null);
+      const trait = here && BIOME_TRAITS[here.id];
+      if (here && trait) this.hud.showBiomeBanner(here.emoji, here.name, trait.name, trait.desc);
+    }
+    // Background music: calm in the hub by day, slow and dark at night, quiet and playful inside a biome.
+    if (here) music.setMood("biome", BIOMES.findIndex((b) => b.id === here.id));
+    else music.setMood(this.isNightNow ? "night" : "day");
     for (const r of this.remotes.values()) r.update(dt);
     for (const [id, ribbon] of this.trails) {
       const root = id === this.room.sessionId ? this.myAvatar?.root : this.remotes.get(id)?.avatar.root;
@@ -645,6 +695,7 @@ export class Game {
     this.pen.detailDistance = q.detailDistance;
     this.pen.popupBudget = q.popupBudget;
     sfx.muted = !this.settings.sound;
+    music.setMuted(!this.settings.sound);
     this.hud.setSettings(this.settings, quality);
   }
 }

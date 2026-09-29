@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { clampToWorld } from "@egg/shared";
 import type { Input } from "./Input.ts";
 
 /**
@@ -16,6 +17,8 @@ export class CameraRig {
   private last = { x: 0, y: 0 };
   /** Screen-shake strength (units), decays quickly. */
   private shakeAmt = 0;
+  /** 0..1 fraction of `distance` the camera is allowed to pull back (shrinks when a wall is behind the player). */
+  private camScale = 1;
 
   /** Jolt the camera (e.g. when a guardian hits you). */
   shake(strength: number) {
@@ -95,7 +98,18 @@ export class CameraRig {
       Math.sin(this.pitch),
       Math.cos(this.yaw) * Math.cos(this.pitch),
     ).multiplyScalar(this.distance);
-    this.camera.position.copy(this.target).add(off);
+    // Keep the camera inside the playable area: with the player against a wall the camera would otherwise sit inside or
+    // behind the wall geometry and flicker / seem to jump. Pull in at once when blocked, ease back out when clear.
+    const inside = (k: number) => {
+      const x = this.target.x + off.x * k;
+      const z = this.target.z + off.z * k;
+      const c = clampToWorld(x, z, 0.7);
+      return Math.abs(c.x - x) < 0.01 && Math.abs(c.z - z) < 0.01;
+    };
+    let allowed = 1;
+    while (allowed > 0.2 && !inside(allowed)) allowed -= 0.04;
+    this.camScale = allowed < this.camScale ? allowed : Math.min(allowed, this.camScale + dt * 3);
+    this.camera.position.copy(this.target).addScaledVector(off, this.camScale);
     if (this.camera.position.y < 0.5) this.camera.position.y = 0.5;
     this.camera.lookAt(this.target);
     if (this.shakeAmt > 0.001) {

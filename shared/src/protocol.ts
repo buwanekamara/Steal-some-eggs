@@ -88,6 +88,8 @@ export const MSG = {
   Use: "use",
   /** server → client: an item went on cooldown. payload: CooldownMsg */
   Cooldown: "cooldown",
+  /** server → all clients: this player swung their bat (drives the swing animation). payload: session id */
+  Swing: "swing",
 } as const;
 
 export interface HotbarSetMsg {

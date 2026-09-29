@@ -39,7 +39,19 @@ interface Limb {
   flop: { a: [number, number]; v: [number, number]; t: [number, number]; next: number };
 }
 
+/** Right-arm swing (rad) while holding an item: negative = forward, ~ chest height. */
+const HOLD_ARM = -1.25;
+/** Arm swing (rad) with both hands reaching up to the egg carried on the head. */
+const CARRY_ARMS = -2.85;
+/** Bat swing: seconds, wind-up arm angle (over the shoulder) and follow-through angle (low and forward). */
+const SWING_SEC = 0.4;
+const SWING_WIND = -2.6;
+const SWING_END = -0.25;
+
 const _q = new THREE.Quaternion();
+const _axisX = new THREE.Vector3(1, 0, 0);
+const _wq = new THREE.Quaternion();
+const _swingQ = new THREE.Quaternion();
 const _qa = new THREE.Quaternion();
 const _qb = new THREE.Quaternion();
 const _axis = new THREE.Vector3();
@@ -64,8 +76,42 @@ export class ProceduralRig {
   readonly found: string[] = [];
   private limbs: Limb[] = [];
   private phase = 0;
+  /** Optional stride rate (rad/s) that replaces the default while running (guardians tie it to their real speed). */
+  cadence: number | null = null;
+  /** Multiplier on the run stride rate (players run their limbs faster than the default). */
+  runRate = 1;
   private amp = 0;
   private air = 0;
+  /** Swing angle to hold the right arm at while carrying something (null = arm swings freely), and its 0..1 blend. */
+  private holdAngle: number | null = null;
+  private hold = 0;
+
+  /** The bone/group of a limb ("armR", …) or null; lets the avatar parent held items to the hand. */
+  limbObject(key: string): THREE.Object3D | null {
+    return this.limbs.find((l) => l.key === key)?.obj ?? null;
+  }
+
+  /** Raise the right arm forward and keep it still while running (angle in radians, negative = forward); null releases it. */
+  setHold(angle: number | null) {
+    if (angle !== null) this.holdAngle = angle;
+    this.holdTarget = angle === null ? 0 : 1;
+  }
+  private holdTarget = 0;
+  /** Both arms up steadying an egg on the head (0..1 blend). Overrides the single-arm hold. */
+  private swingT = -1;
+  /** How far the arm is from its hold pose right now (rad); the bat is rotated by this so it follows the arm. */
+  swingExtra = 0;
+
+  /** Start the bat swing: wind up over the shoulder, slash forward and down, then return to the hold pose. */
+  swing() {
+    if (this.holdAngle !== null) this.swingT = 0;
+  }
+  private carry = 0;
+  private carryTarget = 0;
+
+  setCarryUp(on: boolean) {
+    this.carryTarget = on ? 1 : 0;
+  }
 
   constructor(character: THREE.Object3D) {
     character.updateMatrixWorld(true);
@@ -104,8 +150,23 @@ export class ProceduralRig {
     const targetAmp = running ? 0.95 : 0.06;
     this.amp += (targetAmp - this.amp) * Math.min(1, dt * 10);
     this.air += ((anim === Anim.Air ? 1 : 0) - this.air) * Math.min(1, dt * 12);
-    this.phase += dt * (running ? 4 + speed * 0.28 : 1.6);
+    this.phase += dt * (running ? (this.cadence ?? 4 + speed * 0.28) * this.runRate : 1.6);
 
+    this.hold += (this.holdTarget - this.hold) * Math.min(1, dt * 12);
+    this.carry += (this.carryTarget - this.carry) * Math.min(1, dt * 12);
+    let swingAngle: number | null = null;
+    this.swingExtra = 0;
+    if (this.swingT >= 0 && this.holdAngle !== null) {
+      this.swingT += dt / SWING_SEC;
+      if (this.swingT >= 1) this.swingT = -1;
+      else {
+        const t = this.swingT;
+        const ease = (x: number) => x * x * (3 - 2 * x);
+        const H = this.holdAngle;
+        swingAngle = t < 0.3 ? H + (SWING_WIND - H) * ease(t / 0.3) : t < 0.55 ? SWING_WIND + (SWING_END - SWING_WIND) * ease((t - 0.3) / 0.25) : SWING_END + (H - SWING_END) * ease((t - 0.55) / 0.45);
+        this.swingExtra = swingAngle - H;
+      }
+    }
     const s = Math.sin(this.phase) * this.amp;
     const walk: Record<string, [number, number]> = {
       legL: [s * (1 - this.air) + 0.5 * this.air, 0],
@@ -116,7 +177,21 @@ export class ProceduralRig {
     };
     const w = ragdoll?.weight ?? 0;
     for (const l of this.limbs) {
-      const [sw, sp] = walk[l.key];
+      let [sw, sp] = walk[l.key];
+      if (l.key === "armR" && this.holdAngle !== null && this.hold > 0.001) {
+        // The carrying arm stays raised and still (also in the air); only the other limbs animate.
+        sw += (this.holdAngle - sw) * this.hold;
+        sp -= sp * this.hold;
+      }
+      if (l.key === "armR" && swingAngle !== null) {
+        sw = swingAngle;
+        sp = 0;
+      }
+      if ((l.key === "armL" || l.key === "armR") && this.carry > 0.001) {
+        // Both hands up on the egg, held still while the legs keep running.
+        sw += (CARRY_ARMS - sw) * this.carry;
+        sp -= sp * this.carry;
+      }
       if (w > 0.001) {
         this.flop(l, dt, ragdoll!.landed);
         this.pose(l, sw + (l.flop.a[0] - sw) * w, sp + (l.flop.a[1] - sp) * w);
@@ -186,7 +261,7 @@ class ClipRig {
       this.current?.fadeOut(0.15);
       this.current = next;
     }
-    if (anim === Anim.Run) next.timeScale = Math.max(0.8, speed / 10);
+    if (anim === Anim.Run) next.timeScale = Math.max(1.3, speed / 6);
     this.mixer.update(dt);
   }
 }
@@ -199,6 +274,11 @@ export class Avatar {
   /** Equipped bat/trap attaches here (down by the right hand). */
   readonly handSlot = new THREE.Group();
   private held: THREE.Object3D | null = null;
+  /** True when items are parented to the right arm (procedural rig); false = fixed fallback slot. */
+  private armHold = false;
+  private armBone: THREE.Object3D | null = null;
+  /** Orientation the held item should have in character space (bats lean forward a little); applied every frame. */
+  private handQ = new THREE.Quaternion();
   private heldTool = "";
   private label: TextLabel;
   private rig: { update(dt: number, anim: Anim, speed: number, ragdoll?: RagdollInput): void; kick?(strength: number): void } | null;
@@ -227,17 +307,49 @@ export class Avatar {
     model.position.y = -1;
     this.tumble.add(model);
     this.root.add(this.tumble);
-    this.carrySlot.position.set(0, 1.15, -0.25); // 2.15 above the feet (tumble pivot is at y = 1)
+    this.carrySlot.position.set(0, 1.15, 0.2); // 2.15 above the feet (tumble pivot is at y = 1)
     this.tumble.add(this.carrySlot);
-    this.handSlot.position.set(-0.65, 0.2, 0.2); // by the right hand, held down at the side
-    this.handSlot.rotation.set(2.5, 0, -0.3); // barrel/jaws point down and slightly forward
-    this.tumble.add(this.handSlot);
     const character = model.getObjectByName("model")!.children[0];
     this.rig = ClipRig.tryCreate(character) ?? new ProceduralRig(character);
+    if (this.rig instanceof ProceduralRig) this.rig.runRate = 1.8;
+    // Held items ride on the right hand (arm bone), so they follow the raised arm. Models whose arm we can't find
+    // fall back to a fixed slot beside the body.
+    const arm = this.rig instanceof ProceduralRig ? this.rig.limbObject("armR") : null;
+    if (arm) {
+      this.armHold = true;
+      this.armBone = arm;
+      model.updateMatrixWorld(true);
+      // Put the slot at the hand: the lowest point of the arm's subtree (bones or meshes) in the rest pose.
+      const lowest = new THREE.Vector3(0, Infinity, 0);
+      const v = new THREE.Vector3();
+      arm.traverse((o) => {
+        if (o === arm) return;
+        const pts: THREE.Vector3[] = [o.getWorldPosition(v.clone())];
+        if ((o as THREE.Mesh).isMesh) {
+          const box = new THREE.Box3().setFromObject(o);
+          pts.push(new THREE.Vector3((box.min.x + box.max.x) / 2, box.min.y, (box.min.z + box.max.z) / 2));
+        }
+        for (const p of pts) if (p.y < lowest.y) lowest.copy(p);
+      });
+      if (!isFinite(lowest.y)) arm.getWorldPosition(lowest).y -= 0.6;
+      this.handSlot.position.copy(arm.worldToLocal(lowest));
+      const sc = arm.getWorldScale(new THREE.Vector3()).divide(this.tumble.getWorldScale(new THREE.Vector3()));
+      this.handSlot.scale.set(1 / sc.x, 1 / sc.y, 1 / sc.z); // keep the item's size independent of the model's scale
+      arm.add(this.handSlot);
+    } else {
+      this.handSlot.position.set(-0.65, 0.2, 0.2);
+      this.handSlot.rotation.set(2.5, 0, -0.3);
+      this.tumble.add(this.handSlot);
+    }
 
     this.label = new TextLabel(name, { lineHeight: 0.45 });
     this.label.position.y = 2.35;
     this.root.add(this.label);
+  }
+
+  /** Plays the bat swing on the right arm (no-op unless a tool is held in hand on a rig we can pose). */
+  swing() {
+    if (this.armHold && this.heldTool.startsWith("bat")) (this.rig as ProceduralRig).swing();
   }
 
   setName(name: string) {
@@ -266,15 +378,40 @@ export class Avatar {
       this.held = this.lib.instance(petModelId(def));
       this.held.scale.setScalar(Math.min(1, 1.1 / def.height)); // carried pets are shrunk to armful size
     }
-    if (!this.held) return;
-    // Eggs and pets are carried upright; tools use the hand slot's downward swing.
-    if (kind === "egg" || kind === "pet") this.held.rotation.set(-2.5, 0, 0.3);
+    if (!this.held) {
+      if (this.armHold) (this.rig as ProceduralRig).setHold(null);
+      return;
+    }
+    if (this.armHold) {
+      // The slot is re-aligned to the character every frame (see update), so items keep their upright authoring pose.
+      this.handQ.setFromAxisAngle(_axisX, kind === "bat" ? 0.15 : 0);
+      if (kind === "bat") this.held.position.set(0, 0, 0.35);
+      if (kind === "egg" || kind === "pet") this.held.position.set(0, -0.1, 0.45);
+      if (kind === "trap") this.held.position.set(0, 0, 0.6);
+      (this.rig as ProceduralRig).setHold(HOLD_ARM);
+    } else if (kind === "egg" || kind === "pet") {
+      // Fallback slot: eggs and pets are carried upright; tools use the hand slot's downward swing.
+      this.held.rotation.set(-2.5, 0, 0.3);
+    }
     this.handSlot.add(this.held);
   }
 
   update(dt: number, anim: Anim, speed: number) {
     this.updateRagdoll(dt, anim === Anim.Knocked);
     this.rig?.update(dt, anim, speed, { weight: this.rag.weight, landed: this.rag.landed });
+    // A stolen egg rides on the head: both hands go up to it (and the single-hand item is put away meanwhile).
+    const carrying = this.carrySlot.children.length > 0;
+    if (this.armHold) {
+      (this.rig as ProceduralRig).setCarryUp(carrying);
+      this.handSlot.visible = !carrying;
+    }
+    if (this.armBone && this.held) {
+      // Keep the held item's world orientation fixed relative to the character, whatever the arm bone's own axes are.
+      this.armBone.updateWorldMatrix(true, false);
+      this.armBone.getWorldQuaternion(_wq).invert();
+      _swingQ.setFromAxisAngle(_axisX, (this.rig as ProceduralRig).swingExtra);
+      this.handSlot.quaternion.copy(_wq).multiply(this.tumble.getWorldQuaternion(_q)).multiply(_swingQ).multiply(this.handQ);
+    }
     // Lift the name tag above a carried egg; drop it low while lying on the ground.
     this.label.position.y = this.rag.landed ? 1.3 : this.carrySlot.children.length ? 3.6 : 2.35;
   }

@@ -16,6 +16,7 @@ interface PenPlayerView {
   baseIndex: number;
   money: number;
   penSlots: number;
+  penLevel: number;
   pets: Map<string, { species: string; weight: number; mutation: string; income: number }>;
   penEggs: Map<string, { defId: string; size: number; x: number; z: number; growSec: number; readyIn: number }>;
 }
@@ -63,6 +64,7 @@ export class PenController {
   private mine: PenPlayerView | null = null;
   inv: InventoryMsg | null = null;
   private invAt = 0;
+  private joinedAt = performance.now();
   private popups: Popup[] = [];
   private particles: Particle[] = [];
   private incomeTimer = 0;
@@ -84,7 +86,9 @@ export class PenController {
       const pen: Pen = { base: p.baseIndex, pets: new Map(), eggs: new Map() };
       this.pens.set(sessionId, pen);
       if (sessionId === room.sessionId) this.mine = p;
-      const bounds = penBounds(p.baseIndex, PEN.inset);
+      const bounds = penBounds(p.baseIndex, PEN.inset, p.penLevel);
+      // An upgrade pushes the pen's back out: update the shared bounds object the pets already hold.
+      cb.listen(p, "penLevel", (lv: number) => Object.assign(bounds, penBounds(p.baseIndex, PEN.inset, lv)), false);
 
       cb.onAdd(p, "pets", (pv, uid) => {
         const pet = new PetEntity(this.ctx.lib, pv.species, pv.weight, pv.mutation, pv.income, bounds);
@@ -109,7 +113,11 @@ export class PenController {
         this.ctx.scene.add(egg.root);
         pen.eggs.set(uid as string, egg);
         cb.listen(ev, "readyIn", (v: number) => egg.setReadyIn(v));
-        if (sessionId === room.sessionId) sfx.drop(); // confirmed planted (server-authoritative, not an optimistic client sound)
+        // Planted just now (not one that was already there when we joined): squash-and-stretch pop, and a boing for my own.
+        if (performance.now() - this.joinedAt > 3000) {
+          egg.playPlaceAnimation();
+          if (sessionId === room.sessionId) sfx.plop();
+        }
       });
       cb.onRemove(p, "penEggs", (_ev, uid) => {
         const egg = pen.eggs.get(uid as string);
@@ -179,6 +187,11 @@ export class PenController {
   get chestReadyIn() {
     if (!this.inv?.chestReadyIn) return 0;
     return Math.max(0, Math.ceil(this.inv.chestReadyIn - (performance.now() - this.invAt) / 1000));
+  }
+
+  /** Eggs currently growing in my pen (they have their own room, separate from active pets). */
+  get growingCount() {
+    return this.mine ? this.mine.penEggs.size : 0;
   }
 
   get usedSlots() {

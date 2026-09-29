@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { sfx } from "../audio/Sfx.ts";
 import {
   Anim,
   MUTATION_BY_ID,
@@ -38,6 +39,7 @@ export class PetEntity {
   private moving = false;
   private rainbow: THREE.MeshStandardMaterial[] = [];
   private time = Math.random() * 10;
+  private stepClock = Math.random() * 0.3;
 
   constructor(
     lib: ModelLibrary,
@@ -113,6 +115,11 @@ export class PetEntity {
         const step = Math.min(d, this.speed * dt);
         p.x += (dx / d) * step;
         p.z += (dz / d) * step;
+        // Soft pitter-patter, only audible up close.
+        if ((this.stepClock -= dt) <= 0) {
+          this.stepClock = 0.34 + Math.random() * 0.06;
+          sfx.petStep(sfx.near(p.x, p.z, 22) * 0.6);
+        }
         this.root.rotation.y = lerpAngle(this.root.rotation.y, Math.atan2(dx, dz), Math.min(1, dt * 6));
       }
     } else if ((this.wait -= dt) <= 0) {
