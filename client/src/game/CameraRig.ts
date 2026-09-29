@@ -22,7 +22,11 @@ export class CameraRig {
     this.shakeAmt = Math.max(this.shakeAmt, strength);
   }
 
-  constructor(readonly camera: THREE.PerspectiveCamera, canvas: HTMLCanvasElement, input: Input) {
+  constructor(
+    readonly camera: THREE.PerspectiveCamera,
+    canvas: HTMLCanvasElement,
+    private input: Input,
+  ) {
     canvas.addEventListener("mousedown", (e) => {
       this.dragging = true;
       this.last = { x: e.clientX, y: e.clientY };
@@ -82,6 +86,7 @@ export class CameraRig {
   }
 
   update(focus: THREE.Vector3, dt: number) {
+    if (this.input.look.x || this.input.look.y) this.rotate(this.input.look.x * dt * 500, this.input.look.y * dt * 350); // gamepad right stick
     const goal = focus.clone().add(new THREE.Vector3(0, 2.6, 0));
     // Snap on spawn/teleport, otherwise follow smoothly.
     this.target.lerp(goal, this.target.distanceTo(goal) > 20 ? 1 : Math.min(1, dt * 14));

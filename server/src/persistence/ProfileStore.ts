@@ -1,7 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEV, EGG_BY_ID, HATCH, MUTATION_BY_ID, newUid, PEN, PEN_LEVELS, PET_BY_ID, TRAIL_BY_ID } from "@egg/shared";
+import { DEV, EGG_BY_ID, HATCH, HOTBAR_SIZE, MUTATION_BY_ID, newUid, PEN, PEN_LEVELS, PET_BY_ID, STARTER_TOOLS, TOOLS, TRAIL_BY_ID, type ToolKind } from "@egg/shared";
+import { cleanHotbar, grantTool, stash } from "../systems/Inventory.ts";
+
+/** A bat, or a stack of bear traps. */
+export interface OwnedTool {
+  uid: string;
+  kind: ToolKind;
+  qty: number;
+  obtainedAt: number;
+}
 
 /** A secured egg waiting in the backpack (not planted yet). */
 export interface OwnedEgg {
@@ -53,6 +62,9 @@ export interface Profile {
   boostUntil: number;
   /** Free chest: ms timestamp when it's claimable again (0 = ready now). */
   nextChestAt: number;
+  tools: OwnedTool[];
+  /** HOTBAR_SIZE item uids (eggs, benched pets, tools); "" = empty slot. */
+  hotbar: string[];
   /** Pet species ever hatched (for the Index and "NEW!" tags). */
   discovered: string[];
   /** Species whose Index reward was claimed. */
@@ -72,6 +84,12 @@ export interface Profile {
 }
 
 export function newProfile(name: string): Profile {
+  const profile = blankProfile(name);
+  for (const t of STARTER_TOOLS) grantTool(profile, t.kind, t.qty, profile.createdAt);
+  return profile;
+}
+
+function blankProfile(name: string): Profile {
   const now = Date.now();
   return {
     version: 1,
@@ -89,6 +107,8 @@ export function newProfile(name: string): Profile {
     trail: "",
     boostUntil: 0,
     nextChestAt: 0,
+    tools: [],
+    hotbar: Array(HOTBAR_SIZE).fill(""),
     discovered: [],
     claimed: [],
     completed: [],
@@ -98,12 +118,21 @@ export function newProfile(name: string): Profile {
   };
 }
 
+function migrateTools(raw: unknown): OwnedTool[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  return raw
+    .filter((t) => t && typeof t.uid === "string" && t.uid && !seen.has(t.uid) && seen.add(t.uid) && TOOLS[t.kind as ToolKind])
+    .map((t) => ({ uid: t.uid, kind: t.kind as ToolKind, qty: Math.min(TOOLS[t.kind as ToolKind].maxStack, Math.floor(num(t.qty, 0))), obtainedAt: num(t.obtainedAt, 0) }))
+    .filter((t) => t.qty > 0);
+}
+
 const num = (v: unknown, fallback: number, min = 0) => (typeof v === "number" && Number.isFinite(v) && v >= min ? v : fallback);
 
 /** Fills missing/invalid fields so old or hand-edited save files always load safely. */
 function migrate(raw: Partial<Profile>, name: string): Profile {
-  const base = newProfile(name);
-  return {
+  const base = blankProfile(name);
+  const profile: Profile = {
     version: 1,
     name: typeof raw.name === "string" && raw.name ? raw.name : name,
     speedStat: num(raw.speedStat, base.speedStat),
@@ -146,6 +175,8 @@ function migrate(raw: Partial<Profile>, name: string): Profile {
     trail: typeof raw.trail === "string" && TRAIL_BY_ID.has(raw.trail) && raw.trailsOwned?.includes(raw.trail) ? raw.trail : "",
     boostUntil: num(raw.boostUntil, 0),
     nextChestAt: num(raw.nextChestAt, 0),
+    tools: migrateTools(raw.tools),
+    hotbar: Array.from({ length: HOTBAR_SIZE }, (_, i) => (Array.isArray(raw.hotbar) && typeof raw.hotbar[i] === "string" ? raw.hotbar[i] : "")),
     discovered: Array.isArray(raw.discovered) ? raw.discovered.filter((s) => typeof s === "string" && PET_BY_ID.has(s)) : [],
     claimed: Array.isArray(raw.claimed) ? raw.claimed.filter((s) => typeof s === "string" && PET_BY_ID.has(s)) : [],
     completed: Array.isArray(raw.completed) ? raw.completed.filter((s) => typeof s === "string") : [],
@@ -160,6 +191,12 @@ function migrate(raw: Partial<Profile>, name: string): Profile {
     createdAt: num(raw.createdAt, base.createdAt),
     lastSeen: num(raw.lastSeen, base.lastSeen),
   };
+  cleanHotbar(profile);
+  // Saves from before tools were items (everyone had a bat and traps built in): hand out the starter kit once.
+  if (!Array.isArray(raw.tools)) for (const t of STARTER_TOOLS) grantTool(profile, t.kind, t.qty, Date.now());
+  // Saves from before the hotbar existed: fill it the way new items arrive (tools first, then backpack eggs).
+  if (!Array.isArray(raw.hotbar)) for (const item of [...profile.tools, ...profile.eggs]) stash(profile, item.uid);
+  return profile;
 }
 
 export interface ProfileStore {

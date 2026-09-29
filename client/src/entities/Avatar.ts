@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { Anim, EGG_BY_ID, eggModelId, groundHeightAt } from "@egg/shared";
+import { Anim, EGG_BY_ID, PET_BY_ID, eggModelId, groundHeightAt, petModelId } from "@egg/shared";
 import type { ModelLibrary } from "../assets/ModelLibrary.ts";
 import { TextLabel } from "../ui/labels.ts";
 
@@ -244,26 +244,32 @@ export class Avatar {
     this.label.setLines(name);
   }
 
-  /** Swaps the item held in hand: "" / "bat" / "trap" / "egg" (eggDefId picks which egg model). */
-  setHeld(tool: string, eggDefId = "") {
-    const key = tool === "egg" ? `egg:${eggDefId}` : tool;
+  /** Swaps the item held in hand (HeldKind); `model` is the egg def id / pet species for those kinds. */
+  setHeld(kind: string, model = "") {
+    const key = `${kind}:${model}`;
     if (key === this.heldTool) return;
     this.heldTool = key;
     if (this.held) {
       this.held.removeFromParent();
       this.held = null;
     }
-    if (tool === "bat" || tool === "trap") {
-      this.held = this.lib.instance(tool);
-      this.handSlot.add(this.held);
-    } else if (tool === "egg") {
-      const def = EGG_BY_ID.get(eggDefId);
+    if (kind === "bat" || kind === "trap") {
+      this.held = this.lib.instance(kind);
+    } else if (kind === "egg") {
+      const def = EGG_BY_ID.get(model);
       if (!def) return;
       this.held = this.lib.instance(eggModelId(def));
       this.held.scale.setScalar(0.75);
-      this.held.rotation.set(-2.5, 0, 0.3); // counter the hand slot's downward tilt so the egg sits upright
-      this.handSlot.add(this.held);
+    } else if (kind === "pet") {
+      const def = PET_BY_ID.get(model);
+      if (!def) return;
+      this.held = this.lib.instance(petModelId(def));
+      this.held.scale.setScalar(Math.min(1, 1.1 / def.height)); // carried pets are shrunk to armful size
     }
+    if (!this.held) return;
+    // Eggs and pets are carried upright; tools use the hand slot's downward swing.
+    if (kind === "egg" || kind === "pet") this.held.rotation.set(-2.5, 0, 0.3);
+    this.handSlot.add(this.held);
   }
 
   update(dt: number, anim: Anim, speed: number) {

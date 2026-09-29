@@ -1,6 +1,8 @@
 // Upgrades, trails, the Shop, the Pet Index, selling and fusing. All balance numbers live here.
 
 import type { Rarity } from "./eggs.ts";
+import type { ToolKind } from "./items.ts";
+import { HATCH, PET_BY_ID, petIncome } from "./pets.ts";
 
 // ---------------------------------------------------------------- pen levels (fence tiers)
 
@@ -62,6 +64,21 @@ export function trailMult(id: string): number {
 /** A pet sells for its $/s times this. Reference: a $1/s pet sells for $100. */
 export const SELL_MULT = 100;
 
+/** An egg sells for this × the $/s its average hatch would earn — a sure thing, but less than hatching it and selling the pet. */
+export const EGG_SELL_MULT = 50;
+
+/** Sale price of an unhatched egg of this size. */
+export function eggSellValue(eggDefId: string, size: number): number {
+  const pool = HATCH[eggDefId]?.pets ?? [];
+  const total = pool.reduce((a, [, w]) => a + w, 0) || 1;
+  // Expected hatch weight is baseWeight × size × 1.025 (the middle of rollWeight's 0.8–1.25 range).
+  const avgIncome = pool.reduce((a, [id, w]) => {
+    const pet = PET_BY_ID.get(id)!;
+    return a + (w / total) * petIncome(pet, pet.baseWeight * size * 1.025, "");
+  }, 0);
+  return Math.max(1, Math.round(avgIncome * EGG_SELL_MULT));
+}
+
 export const FUSE = {
   /** How many pets of the same species go in. */
   inputs: 3,
@@ -103,7 +120,7 @@ export const FEATURED = {
 
 export interface ShopItem {
   id: string;
-  tab: "speed" | "money";
+  tab: "speed" | "money" | "gear";
   title: string;
   desc: string;
   icon: string;
@@ -113,6 +130,8 @@ export interface ShopItem {
   speed?: number;
   /** Money = max(flat, your $/s × incomeSeconds). */
   money?: { flat: number; incomeSeconds: number };
+  /** Tool items, stored like any new item: first free hotbar slot, else the inventory. */
+  tool?: { kind: ToolKind; qty: number };
 }
 
 export const SHOP_ITEMS: ShopItem[] = [
@@ -122,6 +141,9 @@ export const SHOP_ITEMS: ShopItem[] = [
   { id: "cash1", tab: "money", title: "Pile of Cash", desc: "$10K, or 10 minutes of your income if that's more.", icon: "💵", gems: 20, money: { flat: 10_000, incomeSeconds: 600 } },
   { id: "cash2", tab: "money", title: "Bag of Cash", desc: "$100K, or 1 hour of your income if that's more.", icon: "💰", gems: 90, money: { flat: 100_000, incomeSeconds: 3_600 } },
   { id: "cash3", tab: "money", title: "Vault of Cash", desc: "$1M, or 8 hours of your income if that's more.", icon: "🏦", gems: 400, money: { flat: 1_000_000, incomeSeconds: 28_800 } },
+  { id: "bat", tab: "gear", title: "Baseball Bat", desc: "Knock an egg out of a thief's hands (or daze a guardian).", icon: "🏏", gems: 25, tool: { kind: "bat", qty: 1 } },
+  { id: "trap3", tab: "gear", title: "Bear Traps x3", desc: "Place in a biome: whoever steps in is stuck and drops their egg.", icon: "🪤", gems: 15, tool: { kind: "trap", qty: 3 } },
+  { id: "trap10", tab: "gear", title: "Bear Traps x10", desc: "A big stack of traps.", icon: "🪤", gems: 40, tool: { kind: "trap", qty: 10 } },
 ];
 
 export const SHOP_BY_ID = new Map(SHOP_ITEMS.map((s) => [s.id, s]));

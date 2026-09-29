@@ -23,8 +23,6 @@ export const MSG = {
   Notify: "notify",
 
   // ---- pen / pets (Phase 4)
-  /** client → server: place the egg I have equipped, at my current spot (must be in my own pen). */
-  Plant: "plant",
   /** client → server: hatch a ready egg in my pen. payload: pen egg uid */
   Hatch: "hatch",
   /** client → server: put a pet in / take it out of my pen. payload: pet uid */
@@ -70,17 +68,47 @@ export const MSG = {
   ClaimPotion: "claimPotion",
 
   // ---- PvP and social (Phase 7)
-  /** client → server: swing the bat. The server picks the nearest player roughly in front of you, in range. */
-  BatHit: "batHit",
   /** client → server: claim the free chest (must be standing at its spot, off cooldown). */
   ClaimChest: "claimChest",
   /** client → server: claim my pending offline earnings (shown as a banner after joining). */
   ClaimOffline: "claimOffline",
-  /** client → server: hold "" / "bat" / "trap" / "egg" in my hand (always allowed, even in the safe zone). payload: EquipMsg */
-  EquipTool: "equipTool",
-  /** client → server: drop a trap at my feet (must have the trap equipped, off cooldown, outside the safe zone). */
-  PlaceTrap: "placeTrap",
+
+  // ---- hotbar and held items
+  /** client → server: hold the item in this hotbar slot (0–9); the same slot again, or -1, empties your hand. */
+  SelectSlot: "selectSlot",
+  /** client → server: put an item into a hotbar slot. payload: HotbarSetMsg */
+  HotbarSet: "hotbarSet",
+  /** client → server: take the item in this slot (0–9) back to the inventory. */
+  HotbarClear: "hotbarClear",
+  /** client → server: swap two hotbar slots. payload: HotbarSwapMsg */
+  HotbarSwap: "hotbarSwap",
+  /** client → server: use the held item — the server decides what that means (swing, place trap, plant egg, place pet). payload: UseMsg */
+  Use: "use",
+  /** server → client: an item went on cooldown. payload: CooldownMsg */
+  Cooldown: "cooldown",
 } as const;
+
+export interface HotbarSetMsg {
+  uid: string;
+  /** 0–9; omitted = the first free slot. Whatever was in that slot goes back to the inventory. */
+  slot?: number;
+}
+
+export interface HotbarSwapMsg {
+  a: number;
+  b: number;
+}
+
+export interface UseMsg {
+  /** Where to place a trap (the client's preview). The server validates it. */
+  x?: number;
+  z?: number;
+}
+
+export interface CooldownMsg {
+  kind: "bat";
+  sec: number;
+}
 
 export interface ShopBuyMsg {
   /** "featured" (with count) or a ShopItem id. */
@@ -88,10 +116,10 @@ export interface ShopBuyMsg {
   count?: number;
 }
 
-export interface EquipMsg {
-  tool: "" | "bat" | "trap" | "egg";
-  /** Required when tool is "egg": which backpack egg to hold. */
-  eggUid?: string;
+export interface InvTool {
+  uid: string;
+  kind: "bat" | "trap";
+  qty: number;
 }
 
 export interface InvEgg {
@@ -124,6 +152,9 @@ export interface InventoryMsg {
   boostLeft: number;
   /** Seconds until the free chest is claimable again (0 = ready now). */
   chestReadyIn: number;
+  tools: InvTool[];
+  /** 10 slots of item uids (an egg, a benched pet or a tool); "" = empty. */
+  hotbar: string[];
 }
 
 export interface HatchedMsg {

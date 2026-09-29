@@ -82,29 +82,54 @@ export const WORLD_EVENTS = {
 
 // ---------------------------------------------------------------- PvP (bat)
 
+/** The baseball bat. */
 export const PVP = {
-  /** Range a bat swing can reach. */
+  /** Range a bat swing can reach (the hitbox is this range × the arc below). */
   hitRange: 4,
   /** How wide the frontal swing arc is (degrees each side of where you're facing). */
   arcDeg: 60,
-  /** Seconds between swings. */
+  /** Guardians are big: their hitbox reaches this much further than a player's. */
+  guardianHitPadding: 1.5,
+  /** Seconds between swings (a swing that misses still uses it). */
   cooldownSec: 3,
-  /** Stun after being hit — shorter than a guardian's catch. */
+  /** Ragdoll/stun after being hit — shorter than a guardian's catch. */
   stunSec: 1,
   knockback: { horizontal: 18, up: 12 },
+  hitsPlayers: true,
+  hitsGuardians: true,
+  /** A bapped guardian stands dazed this long (and drops an egg it was carrying home). */
+  guardianStunSec: 2,
+  /** No swinging from inside the safe zone, and nobody in it can be hit. */
+  blockedInSafeZone: true,
 } as const;
 
+/** What happens to a bear trap once it has caught someone. */
+export type TrapAfterTrigger = "consume" | "return";
+
 export const TRAP = {
-  /** How many you can have placed before needing to wait for one to recharge. */
-  maxCarried: 3,
-  /** Seconds to regain one trap charge. */
-  rechargeSec: 30,
-  /** How close another player has to step to trigger it. */
-  triggerRadius: 1.6,
-  /** Stun once triggered — shorter than the bat, it's a surprise not a beatdown. */
-  stunSec: 1.5,
-  /** An unset trap disappears on its own after this long. */
+  /** Traps one player can have out in the world at once. */
+  maxActive: 3,
+  /** Farthest from you a trap can be placed. */
+  placeRange: 4,
+  /** Where the placement preview sits, in front of you. */
+  previewDistance: 2.5,
+  /** Traps can't be placed right on top of each other. */
+  minSpacing: 1.2,
+  /** An unset trap disappears on its own after this long (it isn't refunded). */
   lifetimeSec: 90,
+  /** How close someone has to step to set it off. */
+  triggerRadius: 1.6,
+  /** Guardians are big: they set traps off from this much further away. */
+  guardianTriggerPadding: 1,
+  /** Immobilized this long once caught. */
+  stunSec: 1.5,
+  guardianStunSec: 3,
+  affectsPlayers: true,
+  affectsGuardians: true,
+  ownerCanTrigger: false,
+  allowInSafeZone: false,
+  /** "consume": the trap is used up; "return": it goes back into its owner's inventory. */
+  afterTrigger: "consume" as TrapAfterTrigger,
 } as const;
 
 // ---------------------------------------------------------------- offline earnings and free chest

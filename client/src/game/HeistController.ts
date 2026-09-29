@@ -44,6 +44,7 @@ interface GuardianView {
   ry: number;
   mode: GuardianMode;
   target: string;
+  stunned: boolean;
 }
 
 export interface HeistContext {
@@ -71,6 +72,8 @@ export class HeistController {
   private eggs = new Map<string, { entity: EggEntity; view: EggView }>();
   private guardians = new Map<string, { entity: Guardian; view: GuardianView }>();
   private traps = new Map<string, THREE.Object3D>();
+  /** Placed traps (for the placement preview's spacing and per-player limit checks). */
+  readonly trapViews = new Map<string, { x: number; z: number; ownerId: string }>();
   private room!: Room;
   private lastBiome: string | null | undefined = undefined;
   /** My carried egg id (from my PlayerState.carrying). */
@@ -109,28 +112,30 @@ export class HeistController {
     cb.onAdd("guardians", (value, key) => {
       const view = value as GuardianView;
       const entity = new Guardian(this.ctx.lib, view.defId);
-      entity.push(view.x, view.z, view.ry, view.mode);
+      entity.push(view.x, view.z, view.ry, view.mode, view.stunned);
       entity.root.position.set(view.x, 0, view.z);
       this.ctx.scene.add(entity.root);
       this.guardians.set(key as string, { entity, view });
       let lastMode = view.mode;
       cb.onChange(view, () => {
-        entity.push(view.x, view.z, view.ry, view.mode);
+        entity.push(view.x, view.z, view.ry, view.mode, view.stunned);
         if (view.mode === GuardianMode.Alert && lastMode !== GuardianMode.Alert && view.target === room.sessionId) sfx.alarm();
         lastMode = view.mode;
       });
     });
 
     cb.onAdd("traps", (value, key) => {
-      const view = value as { x: number; z: number };
+      const view = value as { x: number; z: number; ownerId: string };
       const obj = this.ctx.lib.instance("trap");
       obj.position.set(view.x, 0, view.z);
       this.ctx.scene.add(obj);
       this.traps.set(key as string, obj);
+      this.trapViews.set(key as string, view);
     });
     cb.onRemove("traps", (_value, key) => {
       this.traps.get(key as string)?.removeFromParent();
       this.traps.delete(key as string);
+      this.trapViews.delete(key as string);
     });
 
     room.onMessage(MSG.Knock, (m: KnockMsg) => {

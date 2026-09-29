@@ -9,6 +9,7 @@ import {
   PEN,
   PET_BY_ID,
   SELL_MULT,
+  eggSellValue,
   USE_RANGE,
   WORLD_EVENTS,
   basePlot,
@@ -24,9 +25,13 @@ import {
   type InvPet,
   formatShort,
   newUid,
+  HOTBAR_SIZE,
+  type HotbarSetMsg,
+  type HotbarSwapMsg,
   type InventoryMsg,
 } from "@egg/shared";
-import type { OwnedPet, PenEgg, Profile } from "../persistence/ProfileStore.ts";
+import type { OwnedEgg, OwnedPet, PenEgg, Profile } from "../persistence/ProfileStore.ts";
+import { cleanHotbar, resolveItem, stash, whyNotInInventory } from "./Inventory.ts";
 import { PenEggState, PenPetState, type PlayerState } from "../schema/GameState.ts";
 
 export interface PenHooks {
@@ -115,22 +120,17 @@ export class PenSystem {
 
   // ------------------------------------------------------------------ actions (all validated)
 
-  /** Places the egg you have equipped, at your current spot in your own pen. */
+  /** Use with an egg in hand: plants it at your current spot, which must be in your own pen. */
   plant(sessionId: string) {
     const o = this.owners.get(sessionId);
     if (!o) return;
     const { p, profile } = o;
-    if (p.equipped !== "egg" || !p.equippedEggUid) return;
+    if (p.equipped !== "egg") return;
+    const index = profile.eggs.findIndex((e) => e.uid === p.equippedUid);
+    if (index < 0) return this.changed(sessionId); // stale hand: resync
     if (this.used(profile) >= profile.penSlots) return this.hooks.notify(sessionId, "Your pen is full! Buy a slot or take a pet out.", "bad");
     if (!inPen(p.baseIndex, p.x, p.z, PEN.inset)) return this.hooks.notify(sessionId, "Go to your pen to place it.", "bad");
 
-    const index = profile.eggs.findIndex((e) => e.uid === p.equippedEggUid);
-    if (index < 0) {
-      p.equipped = "";
-      p.equippedEggUid = "";
-      p.equippedEggDefId = "";
-      return;
-    }
     const plot = basePlot(p.baseIndex);
     const dx = p.x - plot.cx;
     const dz = p.z - plot.cz;
@@ -150,10 +150,84 @@ export class PenSystem {
     profile.penEggs.push(egg);
     p.eggCount = profile.eggs.length;
     this.showEgg(p, egg);
-    p.equipped = "";
-    p.equippedEggUid = "";
-    p.equippedEggDefId = "";
+    this.changed(sessionId); // the egg left the hotbar: the slot empties and the hand with it
+  }
+
+  /** Use with a pet in hand: puts it in your pen (it then earns there and leaves the hotbar). */
+  placePet(sessionId: string) {
+    const o = this.owners.get(sessionId);
+    if (!o) return;
+    const { p } = o;
+    if (p.equipped !== "pet") return;
+    if (!inPen(p.baseIndex, p.x, p.z, PEN.inset)) return this.hooks.notify(sessionId, "Go to your pen to place it.", "bad");
+    this.equip(sessionId, p.equippedUid, true);
+  }
+
+  // ------------------------------------------------------------------ hotbar
+
+  /** Hold the item in slot `slot`; the same slot again (or -1 / an empty slot) empties your hand. */
+  select(sessionId: string, slot: unknown) {
+    const o = this.owners.get(sessionId);
+    if (!o || !Number.isInteger(slot) || (slot as number) < -1 || (slot as number) >= HOTBAR_SIZE) return;
+    const { p, profile } = o;
+    const s = slot as number;
+    p.selectedSlot = s === p.selectedSlot || s < 0 || !resolveItem(profile, profile.hotbar[s]) ? -1 : s;
+    this.syncHeld(p, profile);
+  }
+
+  /** Put an owned item into a slot (or the first free one). It moves if it was elsewhere; the slot's old item goes back to the inventory. */
+  hotbarSet(sessionId: string, msg: unknown) {
+    const o = this.owners.get(sessionId);
+    if (!o || typeof msg !== "object" || !msg) return;
+    const { uid, slot } = msg as HotbarSetMsg;
+    const { profile } = o;
+    if (typeof uid !== "string" || !resolveItem(profile, uid)) return;
+    let target = slot;
+    if (target === undefined) {
+      if (profile.hotbar.includes(uid)) return;
+      target = profile.hotbar.indexOf("");
+      if (target < 0) return this.hooks.notify(sessionId, "Your hotbar is full — take something out first.", "bad");
+    }
+    if (!Number.isInteger(target) || target < 0 || target >= HOTBAR_SIZE) return;
+    profile.hotbar = profile.hotbar.map((x) => (x === uid ? "" : x));
+    profile.hotbar[target] = uid;
     this.changed(sessionId);
+  }
+
+  hotbarClear(sessionId: string, slot: unknown) {
+    const o = this.owners.get(sessionId);
+    if (!o || !Number.isInteger(slot) || (slot as number) < 0 || (slot as number) >= HOTBAR_SIZE) return;
+    o.profile.hotbar[slot as number] = "";
+    this.changed(sessionId);
+  }
+
+  hotbarSwap(sessionId: string, msg: unknown) {
+    const o = this.owners.get(sessionId);
+    if (!o || typeof msg !== "object" || !msg) return;
+    const { a, b } = msg as HotbarSwapMsg;
+    const ok = (n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < HOTBAR_SIZE;
+    if (!ok(a) || !ok(b) || a === b) return;
+    const hb = o.profile.hotbar;
+    [hb[a], hb[b]] = [hb[b], hb[a]];
+    // The hand follows the item you were holding.
+    if (o.p.selectedSlot === a) o.p.selectedSlot = b;
+    else if (o.p.selectedSlot === b) o.p.selectedSlot = a;
+    this.changed(sessionId);
+  }
+
+  /** Stores a newly obtained item: first free hotbar slot, else it simply stays in the inventory. */
+  stash(sessionId: string, uid: string) {
+    const o = this.owners.get(sessionId);
+    if (o) stash(o.profile, uid);
+  }
+
+  /** The hand always shows what's in the selected slot; an emptied slot empties the hand. */
+  private syncHeld(p: PlayerState, profile: Profile) {
+    const ref = p.selectedSlot >= 0 ? resolveItem(profile, profile.hotbar[p.selectedSlot]) : null;
+    if (!ref) p.selectedSlot = -1;
+    p.equipped = ref?.kind ?? "";
+    p.equippedUid = ref?.uid ?? "";
+    p.equippedModel = ref?.model ?? "";
   }
 
   hatch(sessionId: string, eggUid: unknown) {
@@ -246,7 +320,9 @@ export class PenSystem {
     const o = this.owners.get(sessionId);
     if (!o) return;
     const def = rollEgg("forest", Math.random());
-    o.profile.eggs.push({ uid: newUid("e"), defId: def.id, size: +(EGG_SIZE.min + Math.random() * (EGG_SIZE.max - EGG_SIZE.min)).toFixed(2), obtainedAt: this.now() });
+    const eggUid = newUid("e");
+    o.profile.eggs.push({ uid: eggUid, defId: def.id, size: +(EGG_SIZE.min + Math.random() * (EGG_SIZE.max - EGG_SIZE.min)).toFixed(2), obtainedAt: this.now() });
+    stash(o.profile, eggUid);
     o.p.eggCount = o.profile.eggs.length;
     this.hooks.notify(sessionId, `Dev: ${def.name} added to your backpack`, "info");
     this.changed(sessionId);
@@ -319,26 +395,41 @@ export class PenSystem {
 
   // ------------------------------------------------------------------ selling and fusing
 
-  /** Sell pets at the SELL stall for (their $/s × SELL_MULT) each. */
+  /**
+   * Sell pets and unhatched eggs at the SELL stall — only ones in the inventory (not in the pen, not on the hotbar).
+   * Pets fetch (their $/s × SELL_MULT), eggs `eggSellValue`.
+   */
   sell(sessionId: string, uids: unknown) {
     const o = this.owners.get(sessionId);
     if (!o) return;
     const { p, profile } = o;
     const spot = useSpot(HUB_BUILDINGS.sell);
-    if (!this.near(p, spot.x, spot.z)) return this.hooks.notify(sessionId, "Go to the SELL stall to sell pets.", "bad");
-    const pets = this.ownPets(profile, uids, 200);
-    if (!pets) return;
-    const total = pets.reduce((a, x) => a + this.income(x, profile) * SELL_MULT, 0);
-    const gone = new Set(pets.map((x) => x.uid));
+    if (!this.near(p, spot.x, spot.z)) return this.hooks.notify(sessionId, "Go to the SELL stall to sell.", "bad");
+    if (!Array.isArray(uids) || uids.length === 0 || uids.length > 200 || new Set(uids).size !== uids.length) return;
+    const pets: OwnedPet[] = [];
+    const eggs: OwnedEgg[] = [];
+    for (const uid of uids) {
+      if (typeof uid !== "string") return;
+      const pet = profile.pets.find((x) => x.uid === uid);
+      const egg = pet ? undefined : profile.eggs.find((x) => x.uid === uid);
+      if (!pet && !egg) return; // not yours
+      const why = whyNotInInventory(profile, uid);
+      if (why) return this.hooks.notify(sessionId, why, "bad");
+      if (pet) pets.push(pet);
+      else eggs.push(egg!);
+    }
+    const total = pets.reduce((a, x) => a + this.income(x, profile) * SELL_MULT, 0) + eggs.reduce((a, e) => a + eggSellValue(e.defId, e.size), 0);
+    const gone = new Set(uids as string[]);
     profile.pets = profile.pets.filter((x) => !gone.has(x.uid));
-    for (const uid of gone) p.pets.delete(uid);
+    profile.eggs = profile.eggs.filter((x) => !gone.has(x.uid));
+    p.eggCount = profile.eggs.length;
     p.money += total;
-    this.refreshIncome(p, profile);
-    this.hooks.notify(sessionId, `Sold ${pets.length} pet${pets.length === 1 ? "" : "s"} for $${formatShort(total)}!`, "good");
+    const what = [pets.length && `${pets.length} pet${pets.length === 1 ? "" : "s"}`, eggs.length && `${eggs.length} egg${eggs.length === 1 ? "" : "s"}`].filter(Boolean).join(" and ");
+    this.hooks.notify(sessionId, `Sold ${what} for $${formatShort(total)}!`, "good");
     this.changed(sessionId);
   }
 
-  /** Fuse 3 pets of the same species at the Fuse Machine into one heavier pet. */
+  /** Fuse 3 pets of the same species at the Fuse Machine into one heavier pet — only pets in the inventory. The result is a new item. */
   fuse(sessionId: string, uids: unknown) {
     const o = this.owners.get(sessionId);
     if (!o) return;
@@ -347,6 +438,10 @@ export class PenSystem {
     if (!this.near(p, spot.x, spot.z)) return this.hooks.notify(sessionId, "Go to the Fuse Machine to fuse pets.", "bad");
     const pets = this.ownPets(profile, uids, FUSE.inputs);
     if (!pets || pets.length !== FUSE.inputs) return this.hooks.notify(sessionId, `Pick ${FUSE.inputs} pets to fuse.`, "bad");
+    for (const x of pets) {
+      const why = whyNotInInventory(profile, x.uid);
+      if (why) return this.hooks.notify(sessionId, why, "bad");
+    }
     if (!pets.every((x) => x.species === pets[0].species)) return this.hooks.notify(sessionId, "All three must be the same pet.", "bad");
 
     // Mutations: each mutated input has a chance to pass its mutation on (best one wins).
@@ -357,21 +452,18 @@ export class PenSystem {
         break;
       }
     }
-    const wasEquipped = pets.filter((x) => x.equipped).length;
     const gone = new Set(pets.map((x) => x.uid));
     profile.pets = profile.pets.filter((x) => !gone.has(x.uid));
-    for (const uid of gone) p.pets.delete(uid);
     const fused: OwnedPet = {
       uid: newUid("p"),
       species: pets[0].species,
       weight: +(pets.reduce((a, x) => a + x.weight, 0) * FUSE.weightFactor).toFixed(1),
       mutation,
-      equipped: wasEquipped > 0,
+      equipped: false,
       obtainedAt: this.now(),
     };
     profile.pets.push(fused);
-    if (fused.equipped) this.showPet(p, fused, profile);
-    this.refreshIncome(p, profile);
+    stash(profile, fused.uid);
     this.hooks.fused(sessionId, { pet: this.invPet(fused), isNew: false });
     this.changed(sessionId);
   }
@@ -409,7 +501,10 @@ export class PenSystem {
   private sendInventory(sessionId: string) {
     const o = this.owners.get(sessionId);
     if (!o) return;
-    const { profile } = o;
+    const { p, profile } = o;
+    // Every change to the profile ends here: drop hotbar slots whose item is gone, and keep the hand in sync.
+    cleanHotbar(profile);
+    this.syncHeld(p, profile);
     this.hooks.inventory(sessionId, {
       eggs: profile.eggs.filter((e) => EGG_BY_ID.has(e.defId)).map((e) => ({ uid: e.uid, defId: e.defId, size: e.size })),
       pets: profile.pets.map((x) => this.invPet(x, profile)),
@@ -421,6 +516,8 @@ export class PenSystem {
       trailsOwned: profile.trailsOwned,
       boostLeft: Math.max(0, Math.ceil((profile.boostUntil - this.now()) / 1000)),
       chestReadyIn: Math.max(0, Math.ceil((profile.nextChestAt - this.now()) / 1000)),
+      tools: profile.tools.map((t) => ({ uid: t.uid, kind: t.kind, qty: t.qty })),
+      hotbar: [...profile.hotbar],
     });
   }
 }

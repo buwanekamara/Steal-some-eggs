@@ -2,16 +2,30 @@ import * as THREE from "three";
 import { Callbacks, Client, type Room } from "@colyseus/sdk";
 import {
   CLOSE,
+  EGG_BY_ID,
+  HOTBAR_SIZE,
   MSG,
   NETWORK,
+  PEN,
+  PET_BY_ID,
+  RARITY_COLOR,
   ROOM_NAME,
+  SAFE_ZONE_Z,
+  TOOLS,
+  TRAP,
   basePlot,
+  clampToWorld,
+  groundHeightAt,
+  inPen,
+  petDisplayName,
   trailMult,
   walkSpeedFromStat,
+  type CooldownMsg,
   type HatchedMsg,
   type CorrectMsg,
   type JoinOptions,
   type MoveMsg,
+  type UseMsg,
 } from "@egg/shared";
 import type { ModelLibrary } from "../assets/ModelLibrary.ts";
 import { Avatar } from "../entities/Avatar.ts";
@@ -20,7 +34,8 @@ import { TrailRibbon } from "../entities/TrailRibbon.ts";
 import { FloatingNumbers } from "../ui/FloatingNumbers.ts";
 import { HatchReveal } from "../ui/HatchReveal.ts";
 import { HeistHud } from "../ui/HeistHud.ts";
-import { Hud } from "../ui/Hud.ts";
+import { Hud, type HotbarSlotView } from "../ui/Hud.ts";
+import { Backpack } from "../ui/Backpack.ts";
 import { InventoryPanel } from "../ui/InventoryPanel.ts";
 import { Menus } from "../ui/Menus.ts";
 import { closeOpenModal } from "../ui/Modal.ts";
@@ -30,6 +45,7 @@ import { CameraRig } from "./CameraRig.ts";
 import { HeistController } from "./HeistController.ts";
 import { HubController } from "./HubController.ts";
 import { PenController } from "./PenController.ts";
+import { TrapPreview } from "./TrapPreview.ts";
 import { getProfileId } from "./identity.ts";
 import { Input } from "./Input.ts";
 import { LocalPlayer } from "./LocalPlayer.ts";
@@ -54,10 +70,10 @@ interface PlayerView {
   penLevel: number;
   trail: string;
   offlineEarnings: number;
+  selectedSlot: number;
   equipped: string;
-  trapsAvailable: number;
-  equippedEggUid: string;
-  equippedEggDefId: string;
+  equippedUid: string;
+  equippedModel: string;
 }
 
 interface StateView {
@@ -106,6 +122,10 @@ export class Game {
   private sendTimer = 0;
   private listTimer = 0;
   private fps = 60;
+  private trapPreview: TrapPreview;
+  /** While arranging the hotbar: a slot clicked once, waiting for a second slot to swap with (-1 = none). */
+  private pickedSlot = -1;
+  private backpack: Backpack;
 
   constructor(private canvas: HTMLCanvasElement, private ui: HTMLElement, private lib: ModelLibrary) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -123,11 +143,10 @@ export class Game {
       equip: (uid, on) => this.pen.equip(uid, on),
       equipBest: () => this.pen.equipBest(),
       buySlot: () => this.pen.buySlot(),
-      equipEgg: (uid) => this.equipEgg(uid),
-      unequipEgg: () => this.room?.send(MSG.EquipTool, { tool: "" }),
       hatch: (uid) => this.pen.hatch(uid),
       growAll: import.meta.env.DEV ? () => this.pen.devGrow() : undefined,
     });
+    this.trapPreview = new TrapPreview(lib, this.world.scene);
     this.pen = new PenController({
       lib,
       scene: this.world.scene,
@@ -150,6 +169,14 @@ export class Game {
     this.hud.onIndexButton = () => this.menus.open("index");
     this.hud.onEggButton = () => this.panel.toggle("eggs");
     this.hud.onPawButton = () => this.panel.toggle("pets");
+    this.backpack = new Backpack(ui, {
+      toSlot: (uid, slot) => this.room?.send(MSG.HotbarSet, { uid, slot }),
+      swapSlots: (a, b) => this.room?.send(MSG.HotbarSwap, { a, b }),
+      clearSlot: (slot) => this.room?.send(MSG.HotbarClear, slot),
+    });
+    this.hud.onBagButton = () => this.backpack.toggle();
+    this.hud.onSlotClick = (slot) => this.hotbarSlotClicked(slot);
+    this.hud.onSlotClear = (slot) => this.room?.send(MSG.HotbarClear, slot);
     this.hud.onOfflineClaim = () => this.room?.send(MSG.ClaimOffline);
     this.heist = new HeistController({
       lib,
@@ -173,16 +200,22 @@ export class Game {
       if (code === "KeyG" && import.meta.env.DEV) this.pen.devGrow();
       if (code === "KeyJ" && import.meta.env.DEV) this.room?.send(MSG.DevEgg);
       if (code === "Tab") this.panel.toggle("pets");
-      if (code === "Escape") closeOpenModal() || this.panel.close();
+      if (code === "Escape") {
+        if (!closeOpenModal()) {
+          if (this.backpack.isOpen) this.backpack.close();
+          else this.panel.close();
+        }
+      }
       if (code === "KeyM" && import.meta.env.DEV) this.room?.send(MSG.DevMoney);
       if (code === "KeyK" && import.meta.env.DEV) this.room?.send(MSG.DevGems);
       if (code === "KeyP" && import.meta.env.DEV) for (let i = 0; i < 3; i++) this.room?.send(MSG.DevPet, "forest_chick");
-      if (code === "Digit1") this.hotbarSlotClicked("bat");
-      if (code === "Digit2") this.hotbarSlotClicked("trap");
-      if (code === "Digit3") this.hotbarSlotClicked("egg");
+      // Keys 1–9 are slots 1–9, 0 is the tenth.
+      const digit = /^Digit(\d)$/.exec(code);
+      if (digit) this.selectSlot((Number(digit[1]) + 9) % 10);
+      if (code === "HotbarPrev" || code === "HotbarNext") this.cycleSlot(code === "HotbarNext" ? 1 : -1);
+      if (code === "KeyB") this.backpack.toggle();
       if (code === "KeyF") this.useEquipped();
     });
-    this.hud.onEquip = (tool) => this.hotbarSlotClicked(tool);
     addEventListener("resize", () => this.resize());
     this.resize();
   }
@@ -229,15 +262,13 @@ export class Game {
         this.applyMyStats(p);
         this.hud.showOfflineClaim(p.offlineEarnings > 0 ? p.offlineEarnings : null);
         cb.listen(p, "offlineEarnings", (v: number) => this.hud.showOfflineClaim(v > 0 ? v : null));
-        this.hud.setEquipped(p.equipped);
-        this.hud.setTrapCount(p.trapsAvailable);
-        this.myAvatar.setHeld(p.equipped, p.equippedEggDefId);
-        cb.listen(p, "equipped", (v: string) => {
-          this.hud.setEquipped(v);
-          this.myAvatar?.setHeld(v, p.equippedEggDefId);
-        });
-        cb.listen(p, "equippedEggDefId", (v: string) => this.myAvatar?.setHeld(p.equipped, v));
-        cb.listen(p, "trapsAvailable", (v: number) => this.hud.setTrapCount(v));
+        const held = () => {
+          this.myAvatar?.setHeld(p.equipped, p.equippedModel);
+          this.input.setUseButton(p.equipped);
+        };
+        held();
+        cb.listen(p, "equipped", held);
+        cb.listen(p, "equippedModel", held);
         cb.onChange(p, () => {
           if (p.speedStat > lastSpeed && p.training) this.floatGain(p.speedStat - lastSpeed, "speed");
           if (p.money > lastMoney) this.hud.pulse(this.hud.moneyStat); // income "+$" pops over the pets themselves
@@ -248,12 +279,12 @@ export class Game {
       } else {
         const r = new RemotePlayer(this.lib, p.name, p.baseIndex);
         r.push(p as MoveMsg & PlayerView);
-        r.avatar.setHeld(p.equipped, p.equippedEggDefId);
+        r.avatar.setHeld(p.equipped, p.equippedModel);
         this.remotes.set(id, r);
         this.world.scene.add(r.avatar.root);
         cb.onChange(p, () => r.push({ x: p.x, y: p.y, z: p.z, ry: p.ry, anim: p.anim as MoveMsg["anim"] }));
-        cb.listen(p, "equipped", (v: string) => r.avatar.setHeld(v, p.equippedEggDefId));
-        cb.listen(p, "equippedEggDefId", (v: string) => r.avatar.setHeld(p.equipped, v));
+        cb.listen(p, "equipped", () => r.avatar.setHeld(p.equipped, p.equippedModel));
+        cb.listen(p, "equippedModel", () => r.avatar.setHeld(p.equipped, p.equippedModel));
       }
     });
 
@@ -276,6 +307,7 @@ export class Game {
     this.pen.bind(room);
     this.hub.bind(room);
     room.onMessage(MSG.Fused, (m: HatchedMsg) => this.reveal.show(m, "FUSED!"));
+    room.onMessage(MSG.Cooldown, (m: CooldownMsg) => this.hud.startCooldown(m.kind, m.sec));
 
     const state = room.state as StateView;
     const timers = () => this.hud.setTimers(state.nightIn, state.potionIn, state.isNight, state.potionAvailable);
@@ -304,28 +336,99 @@ export class Game {
     this.loop();
   }
 
-  /** 1/2/3 or clicking a hotbar slot. Bat/trap toggle directly; the egg slot has no single item to
-   *  pick, so it unequips if you're already holding one, or opens the Eggs panel to choose one. */
-  private hotbarSlotClicked(tool: "bat" | "trap" | "egg") {
-    if (tool === "egg") {
-      if (this.myView?.equipped === "egg") this.room?.send(MSG.EquipTool, { tool: "" });
-      else this.panel.toggle("eggs");
-      return;
+  /** Keys 1–0 / tapping a slot: hold that item (the same slot again empties your hand). The server validates. */
+  private selectSlot(slot: number) {
+    this.room?.send(MSG.SelectSlot, slot);
+  }
+
+  /** Gamepad LB/RB: step to the previous/next slot that has something in it. */
+  private cycleSlot(dir: 1 | -1) {
+    const bar = this.pen.inv?.hotbar ?? [];
+    const from = this.myView?.selectedSlot ?? -1;
+    for (let k = 1; k <= HOTBAR_SIZE; k++) {
+      const i = (((from < 0 ? (dir > 0 ? -1 : 0) : from) + dir * k) % HOTBAR_SIZE + HOTBAR_SIZE) % HOTBAR_SIZE;
+      if (bar[i]) return this.selectSlot(i);
     }
-    const next = this.myView?.equipped === tool ? "" : tool;
-    this.room?.send(MSG.EquipTool, { tool: next });
   }
 
-  /** Equip a backpack egg (from the Eggs panel) — it shows in your hand until you place it or swap tools. */
-  private equipEgg(uid: string) {
-    this.room?.send(MSG.EquipTool, { tool: "egg", eggUid: uid });
+  /**
+   * Clicking a hotbar slot. Normally: hold it. While the backpack is open (arranging), items are dragged; clicking
+   * one slot and then another also swaps them (a tap-friendly alternative).
+   */
+  private hotbarSlotClicked(slot: number) {
+    if (!this.backpack.isOpen) {
+      this.pickedSlot = -1;
+      return this.selectSlot(slot);
+    }
+    if (this.backpack.justDragged) return; // the click at the end of a drag
+    if (this.pickedSlot >= 0) {
+      if (this.pickedSlot !== slot) this.room?.send(MSG.HotbarSwap, { a: this.pickedSlot, b: slot });
+      this.pickedSlot = -1;
+    } else if (this.pen.inv?.hotbar[slot]) {
+      this.pickedSlot = slot;
+    }
   }
 
-  /** F / the touch bat button: whatever's equipped decides what happens (nothing if bare-handed). */
+  /** F / X / the touch action button: ask the server to use whatever is held (it decides what that means). */
   private useEquipped() {
-    if (this.myView?.equipped === "bat") this.room?.send(MSG.BatHit);
-    else if (this.myView?.equipped === "trap") this.room?.send(MSG.PlaceTrap);
-    else if (this.myView?.equipped === "egg") this.room?.send(MSG.Plant);
+    const msg: UseMsg = this.myView?.equipped === "trap" ? { x: this.trapPreview.at.x, z: this.trapPreview.at.z } : {};
+    this.room?.send(MSG.Use, msg); // with nothing held, the server answers with a "pick an item first" notice
+  }
+
+  /** Client-side guess at whether a trap would be accepted there (the ring color). The server re-checks all of it. */
+  private trapSpotOk(x: number, z: number) {
+    const state = this.room.state as StateView;
+    if (!TRAP.allowInSafeZone && (this.me.pos.z < SAFE_ZONE_Z || z < SAFE_ZONE_Z)) return false;
+    const c = clampToWorld(x, z, 0.5);
+    if (Math.abs(c.x - x) > 0.01 || Math.abs(c.z - z) > 0.01 || groundHeightAt(x, z) !== 0 || state.isNight) return false;
+    let mine = 0;
+    for (const t of this.heist.trapViews.values()) {
+      if (t.ownerId === this.room.sessionId) mine++;
+      if (Math.hypot(t.x - x, t.z - z) < TRAP.minSpacing) return false;
+    }
+    return mine < TRAP.maxActive;
+  }
+
+  /** Every frame: hotbar slots, what Use will do, and the trap preview. */
+  private updateHotbar() {
+    const p = this.myView;
+    const inv = this.pen.inv;
+    if (!p || !inv) return;
+    const views = inv.hotbar.map((uid): HotbarSlotView | null => {
+      if (!uid) return null;
+      const egg = inv.eggs.find((e) => e.uid === uid);
+      if (egg) {
+        const def = EGG_BY_ID.get(egg.defId)!;
+        return { kind: "egg", icon: "🥚", name: def.name, color: RARITY_COLOR[def.rarity] };
+      }
+      const pet = inv.pets.find((x) => x.uid === uid);
+      if (pet) {
+        const def = PET_BY_ID.get(pet.species)!;
+        return { kind: "pet", icon: def.icon, name: petDisplayName(def, pet.mutation), color: RARITY_COLOR[def.rarity] };
+      }
+      const tool = inv.tools.find((t) => t.uid === uid);
+      if (tool) return { kind: tool.kind, icon: TOOLS[tool.kind].icon, name: TOOLS[tool.kind].name, qty: TOOLS[tool.kind].maxStack > 1 ? tool.qty : undefined };
+      return null;
+    });
+    if (!this.backpack.isOpen) this.pickedSlot = -1;
+    this.hud.setHotbar(views, p.selectedSlot, this.backpack.isOpen, this.pickedSlot);
+    this.backpack.update(inv);
+    this.hud.tickCooldowns();
+
+    const holdingTrap = p.equipped === "trap" && this.me.stun <= 0;
+    this.trapPreview.update(holdingTrap, this.me.pos, this.me.ry, (x, z) => this.trapSpotOk(x, z));
+
+    const key = this.input.isTouch ? "" : "[F] ";
+    const inMyPen = inPen(p.baseIndex, this.me.pos.x, this.me.pos.z, PEN.inset);
+    let action: string | null = null;
+    if (this.backpack.isOpen) action = this.pickedSlot >= 0 ? "Click another slot to swap" : "Drag items onto your hotbar";
+    else if (p.equipped === "bat") {
+      const cd = this.hud.cooldownLeft("bat");
+      action = cd > 0 ? `Bat ready in ${cd.toFixed(1)}s` : this.me.pos.z < SAFE_ZONE_Z ? "No swinging in the safe zone" : `${key}Swing bat`;
+    } else if (p.equipped === "trap") action = this.trapPreview.valid ? `${key}Place bear trap` : "Can't place a trap here";
+    else if (p.equipped === "egg") action = inMyPen ? `${key}Place egg in your pen` : "Walk into your pen to place this egg";
+    else if (p.equipped === "pet") action = inMyPen ? `${key}Place pet in your pen` : "Walk into your pen to place this pet";
+    this.hud.setAction(action);
   }
 
   private applyMyStats(p: PlayerView) {
@@ -376,9 +479,16 @@ export class Game {
     if (p.eggCount > 0 && this.pen.usedSlots < (this.pen.inv?.slots ?? 0)) {
       this.world.pointAtTreadmill(-1);
       if (p.equipped === "egg") {
-        return this.hud.setHint(this.input.isTouch ? "Walk into your pen and tap 🏏 to place your egg 🥚" : "Walk into your pen and press F to place your egg 🥚");
+        return this.hud.setHint(this.input.isTouch ? "Walk into your pen and tap ✋ to place your egg 🥚" : "Walk into your pen and press F to place your egg 🥚");
       }
-      return this.hud.setHint("Open your backpack (🥚) and equip an egg to plant it!");
+      const slot = this.pen.inv?.hotbar.findIndex((uid) => this.pen.inv?.eggs.some((e) => e.uid === uid)) ?? -1;
+      return this.hud.setHint(
+        slot >= 0
+          ? this.input.isTouch
+            ? `Tap your egg on the hotbar to hold it 🥚`
+            : `Press ${(slot + 1) % 10} to hold your egg 🥚`
+          : "Open your inventory (🎒) and put an egg on your hotbar",
+      );
     }
     const newbie = p.speedStat < 50;
     const running = this.me.onTreadmill;
@@ -479,6 +589,7 @@ export class Game {
     this.pen.update(dt);
     this.hub.update(this.myView, this.potionAvailable);
     this.prompts.commit();
+    this.updateHotbar();
     this.hud.setEggCount(this.pen.attention);
     this.updateMenus(dt);
     this.flushGains(dt);

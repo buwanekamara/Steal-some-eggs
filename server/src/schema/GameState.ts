@@ -1,5 +1,4 @@
 import { MapSchema, Schema, type } from "@colyseus/schema";
-import { TRAP } from "@egg/shared";
 
 /** A pet standing in someone's pen (everyone sees these). Where it wanders is up to each client. */
 export class PenPetState extends Schema {
@@ -48,14 +47,14 @@ export class PlayerState extends Schema {
   @type("string") trail = "";
   /** Money earned while away, waiting to be claimed (0 = none / already claimed). */
   @type("float64") offlineEarnings = 0;
-  /** What's in my hand right now: "" / "bat" / "trap" / "egg". */
+  /** Selected hotbar slot 0–9 (-1 = empty hand). */
+  @type("int8") selectedSlot = -1;
+  /** Kind of item in my hand (HeldKind): "" / "egg" / "pet" / "bat" / "trap". */
   @type("string") equipped = "";
-  /** Traps I can still place before waiting for a recharge. */
-  @type("uint8") trapsAvailable = TRAP.maxCarried;
-  /** Which backpack egg is equipped (meaningful only while equipped === "egg"). */
-  @type("string") equippedEggUid = "";
-  /** Its def id, so everyone can see the right egg model in your hand. */
-  @type("string") equippedEggDefId = "";
+  /** Uid of the held item. */
+  @type("string") equippedUid = "";
+  /** Egg def id / pet species / tool kind, so everyone sees the right model in my hand. */
+  @type("string") equippedModel = "";
   /** Pets in the pen, keyed by pet uid. */
   @type({ map: PenPetState }) pets = new MapSchema<PenPetState>();
   /** Eggs growing in the pen, keyed by egg uid. */
@@ -95,6 +94,8 @@ export class GuardianState extends Schema {
   @type("uint8") mode = 0;
   /** Session id being chased ("" = none). */
   @type("string") target = "";
+  /** Dazed by a bat or a trap: frozen in place for a moment. */
+  @type("boolean") stunned = false;
 }
 
 export class GameState extends Schema {

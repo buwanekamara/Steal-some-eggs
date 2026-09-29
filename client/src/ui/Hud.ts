@@ -44,7 +44,13 @@ export class Hud {
   onIndexButton?: () => void;
   onPawButton?: () => void;
   onOfflineClaim?: () => void;
-  onEquip?: (tool: "bat" | "trap" | "egg") => void;
+  onBagButton?: () => void;
+  /** A hotbar slot was clicked/tapped (select it, or arrange it while the inventory is open). */
+  onSlotClick?: (slot: number) => void;
+  /** The ✕ on a slot while arranging: take its item back to the inventory. */
+  onSlotClear?: (slot: number) => void;
+  private hotbarSig = "";
+  private cooldowns: Record<string, { end: number; sec: number }> = {};
 
   constructor(private root: HTMLElement, isTouch: boolean) {
     root.insertAdjacentHTML(
@@ -56,6 +62,10 @@ export class Hud {
           <button class="big-btn shop">🛒 Shop</button>
           <button class="big-btn index">📘 Index</button>
           <div class="slow-mode"><div class="toggle"><div class="knob"></div></div><span>Slow Mode</span></div>
+        </div>
+        <div class="hud-topbar">
+          <button class="tb-btn menu" title="Menu: controls (H)">☰</button>
+          <button class="tb-btn bag" title="Inventory (B)">🎒</button>
         </div>
         <div class="hud-right">
           <button class="sq-btn egg" title="Eggs">🥚</button>
@@ -74,10 +84,9 @@ export class Hud {
         <div class="hint" hidden></div>
         <div class="night-banner" hidden>🌙 <b>Night has fallen</b> — biomes sealed off, eggs hatch <b>${WORLD_EVENTS.nightGrowMult}x</b> faster!</div>
         <div class="offline-banner" hidden>💰 <b>Welcome back!</b> You earned <span class="amt"></span> while away.<button class="claim-btn">Claim</button></div>
-        <div class="hotbar panel">
-          <div class="hb-slot" data-tool="bat" title="Bat (1) — knocks a nearby carrier's egg loose"><span class="hb-key">1</span><span class="hb-icon">🏏</span></div>
-          <div class="hb-slot" data-tool="trap" title="Trap (2) — place it, another player stepping on it drops their egg"><span class="hb-key">2</span><span class="hb-icon">🪤</span><span class="hb-count"></span></div>
-          <div class="hb-slot" data-tool="egg" title="Equip an egg from your backpack (🥚), then use it to place it in your pen"><span class="hb-key">3</span><span class="hb-icon egg-icon">🥚</span></div>
+        <div class="hotbar-wrap">
+          <div class="hb-action" hidden></div>
+          <div class="hotbar panel"></div>
         </div>
         <div class="overlay" hidden></div>
         <div class="player-list panel">
@@ -89,8 +98,8 @@ export class Hud {
         <div class="debug" hidden></div>
         <div class="help panel">
           <b>Controls</b><br/>
-          ${isTouch ? "Left thumb: move · Right side drag: camera · ⬆: jump · Tap 1/2/3 to equip bat/trap/egg, 🏏 to use it · Hold 👆 on an egg: steal" : "WASD / arrows: move · Space: jump · Hold E: steal egg · 1/2/3: equip bat/trap/egg · F: use it · Drag mouse: camera · Wheel: zoom"}<br/>
-          ${isTouch ? "" : "C: Slow Mode · Tab: pets · F3: debug info · H: hide this help<br/><i>Dev: = ×10 Speed stat · - reset · J: free egg · G: finish growing eggs · M: +$1M · K: +100 💎 · P: 3 Chicks · URL ?profile=name for a 2nd test player</i>"}
+          ${isTouch ? "Left thumb: move · Right side drag: camera · ⬆: jump · Tap a hotbar slot to hold it, the action button to use it · Hold 👆 on an egg: steal" : "WASD / arrows: move · Space: jump · Hold E: steal egg · 1–0: hotbar · F: use held item · B: inventory · Drag mouse: camera · Wheel: zoom"}<br/>
+          ${isTouch ? "" : "Gamepad: stick move · A jump · X use · LB/RB hotbar · Y inventory<br/>C: Slow Mode · Tab: pets · F3: debug info · H: hide this help<br/><i>Dev: = ×10 Speed stat · - reset · J: free egg · G: finish growing eggs · M: +$1M · K: +100 💎 · P: 3 Chicks · URL ?profile=name for a 2nd test player</i>"}
         </div>
       </div>`,
     );
@@ -119,9 +128,16 @@ export class Hud {
     q(".big-btn.index").addEventListener("click", () => this.onIndexButton?.());
     q(".sq-btn.paw").addEventListener("click", () => this.onPawButton?.());
     this.offlineBannerEl.querySelector(".claim-btn")!.addEventListener("click", () => this.onOfflineClaim?.());
-    for (const slot of this.hotbarEl.querySelectorAll<HTMLElement>(".hb-slot")) {
-      slot.addEventListener("click", () => this.onEquip?.(slot.dataset.tool as "bat" | "trap"));
-    }
+    q(".tb-btn.bag").addEventListener("click", () => this.onBagButton?.());
+    q(".tb-btn.menu").addEventListener("click", () => this.toggleHelp());
+    // One delegated handler: slots are re-rendered whenever their contents change.
+    this.hotbarEl.addEventListener("click", (e) => {
+      const t = e.target as HTMLElement;
+      const clear = t.closest<HTMLElement>(".hb-clear");
+      if (clear) return this.onSlotClear?.(Number(clear.dataset.slot));
+      const slot = t.closest<HTMLElement>(".hb-slot");
+      if (slot) this.onSlotClick?.(Number(slot.dataset.slot));
+    });
     for (const head of root.querySelectorAll<HTMLElement>(".pl-head [data-key]")) {
       head.addEventListener("click", () => {
         const key = head.dataset.key as SortKey;
@@ -271,15 +287,74 @@ export class Hud {
     if (amount) (this.offlineBannerEl.querySelector(".amt") as HTMLElement).textContent = `$${formatShort(amount)}`;
   }
 
-  /** Highlights the equipped hotbar slot ("" = bare hands). */
-  setEquipped(tool: string) {
-    for (const slot of this.hotbarEl.querySelectorAll<HTMLElement>(".hb-slot")) slot.classList.toggle("on", slot.dataset.tool === tool);
+  /**
+   * Draws the hotbar (keys 1–9, 0). Normally only filled slots show — it grows as items are added, keeping each
+   * item's own key number; while arranging (backpack open) all 10 show, with ✕ buttons and drop targets.
+   * `picked` highlights a slot waiting for a second click to swap. Re-renders only when something changed.
+   */
+  setHotbar(slots: (HotbarSlotView | null)[], selected: number, arranging: boolean, picked: number) {
+    const sig = JSON.stringify([slots, selected, arranging, picked]);
+    if (sig === this.hotbarSig) return;
+    this.hotbarSig = sig;
+    this.hotbarEl.classList.toggle("arranging", arranging);
+    this.hotbarEl.hidden = !arranging && slots.every((s) => !s);
+    this.hotbarEl.innerHTML = slots
+      .map((s, i) => {
+        if (!s && !arranging) return "";
+        const cls = ["hb-slot", s ? "" : "empty", i === selected ? "on" : "", i === picked ? "picked" : ""].filter(Boolean).join(" ");
+        const body = s
+          ? `<span class="hb-icon" style="${s.color ? `--rc:${s.color}` : ""}">${s.icon}</span><span class="hb-name">${escapeHtml(s.name)}</span>${
+              s.qty !== undefined ? `<span class="hb-count">x${s.qty}</span>` : ""
+            }<span class="hb-cd" data-kind="${s.kind}"></span>${arranging ? `<button class="hb-clear" data-slot="${i}" title="Back to inventory">✕</button>` : ""}`
+          : "";
+        return `<div class="${cls}" data-slot="${i}" title="${s ? escapeHtml(s.name) : "Empty"}"><span class="hb-key">${(i + 1) % 10}</span>${body}</div>`;
+      })
+      .join("");
+    this.tickCooldowns();
   }
 
-  /** "x3" stock badge on the trap slot. */
-  setTrapCount(n: number) {
-    (this.hotbarEl.querySelector('.hb-slot[data-tool="trap"] .hb-count') as HTMLElement).textContent = `x${n}`;
+  /** What Use does right now, shown above the hotbar (null hides it). */
+  setAction(text: string | null) {
+    const el = this.root.querySelector(".hb-action") as HTMLElement;
+    el.hidden = !text;
+    if (text && el.textContent !== text) el.textContent = text;
   }
+
+  /** An item went on cooldown: its slots show a shrinking dark overlay with the seconds left. */
+  startCooldown(kind: string, sec: number) {
+    this.cooldowns[kind] = { end: performance.now() + sec * 1000, sec };
+    this.tickCooldowns();
+  }
+
+  /** Call every frame. */
+  tickCooldowns() {
+    const now = performance.now();
+    for (const el of this.hotbarEl.querySelectorAll<HTMLElement>(".hb-cd")) {
+      const cd = this.cooldowns[el.dataset.kind ?? ""];
+      const left = cd ? (cd.end - now) / 1000 : 0;
+      el.hidden = left <= 0;
+      if (left > 0) {
+        el.style.height = `${(left / cd!.sec) * 100}%`;
+        el.textContent = left.toFixed(1);
+      }
+    }
+  }
+
+  /** Seconds left on an item's cooldown (0 = ready). */
+  cooldownLeft(kind: string) {
+    const cd = this.cooldowns[kind];
+    return cd ? Math.max(0, (cd.end - performance.now()) / 1000) : 0;
+  }
+}
+
+export interface HotbarSlotView {
+  kind: string;
+  icon: string;
+  name: string;
+  /** Stack size, for stackable items (bear traps). */
+  qty?: number;
+  /** Rarity color for eggs and pets. */
+  color?: string;
 }
 
 function formatDuration(secs: number) {

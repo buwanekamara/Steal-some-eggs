@@ -46,6 +46,8 @@ interface GuardianMeta {
   eggId: string | null;
   timer: number;
   chaseStartedAt: number;
+  /** Dazed by a bat/trap until this time (ms): frozen, then carries on with its job. */
+  stunnedUntil: number;
 }
 
 const HOME_EPS = 0.5;
@@ -80,7 +82,7 @@ export class HeistSystem {
       g.ry = SLEEP_FACING;
       g.mode = GuardianMode.Sleep;
       this.state.guardians.set(def.id, g);
-      this.guardians.set(def.id, { def, eggId: null, timer: 0, chaseStartedAt: 0 });
+      this.guardians.set(def.id, { def, eggId: null, timer: 0, chaseStartedAt: 0, stunnedUntil: 0 });
     }
     NESTS.forEach((_, i) => this.spawnEgg(i));
   }
@@ -115,6 +117,18 @@ export class HeistSystem {
     this.drop(sessionId);
   }
 
+  /** Bat or trap: the guardian freezes for a moment and drops an egg it was carrying home (it stays loose). */
+  stunGuardian(id: string, ms: number): GuardianDef | null {
+    const g = this.state.guardians.get(id);
+    const gm = this.guardians.get(id);
+    if (!g || !gm) return null;
+    gm.stunnedUntil = this.now() + ms;
+    g.stunned = true;
+    const egg = gm.eggId ? this.state.eggs.get(gm.eggId) : undefined;
+    if (egg?.state === EggStatus.WithGuardian) this.forceLoose(gm.eggId!, egg, g.x, g.z);
+    return gm.def;
+  }
+
   // ------------------------------------------------------------------ simulation
 
   tick(dt: number) {
@@ -145,6 +159,8 @@ export class HeistSystem {
   // ------------------------------------------------------------------ guardians
 
   private tickGuardian(g: GuardianState, gm: GuardianMeta, dt: number, now: number) {
+    if (now < gm.stunnedUntil) return;
+    if (g.stunned) g.stunned = false;
     const def = gm.def;
     switch (g.mode) {
       case GuardianMode.Sleep:

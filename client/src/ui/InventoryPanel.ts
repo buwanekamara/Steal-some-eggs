@@ -1,12 +1,4 @@
-import {
-  EGG_BY_ID,
-  MUTATION_BY_ID,
-  PET_BY_ID,
-  RARITY_COLOR,
-  formatShort,
-  petDisplayName,
-  type InventoryMsg,
-} from "@egg/shared";
+import { EGG_BY_ID, MUTATION_BY_ID, PET_BY_ID, RARITY_COLOR, formatShort, petDisplayName, type InventoryMsg } from "@egg/shared";
 import { formatClock } from "../entities/PenEggEntity.ts";
 
 export interface GrowingEggView {
@@ -21,37 +13,35 @@ export interface PanelData {
   growing: GrowingEggView[];
   slots: number;
   money: number;
-  /** Which backpack egg (if any) is currently equipped, ready to place. */
-  equippedEggUid: string;
 }
 
 export interface PanelActions {
+  /** Put a pet in the pen / take it out. */
   equip(uid: string, on: boolean): void;
   equipBest(): void;
   buySlot(): void;
-  /** Equip a backpack egg — it shows in your hand until you walk to your pen and place it (F). */
-  equipEgg(uid: string): void;
-  unequipEgg(): void;
   hatch(uid: string): void;
   /** Dev builds only (instant grow). */
   growAll?: () => void;
 }
 
+export type PanelMode = "pets" | "eggs";
+
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /**
- * Right-docked panel (reference layout), opened by the Egg and Paw buttons:
- * - Eggs: "Growing Eggs" with progress bars / Open buttons, then backpack eggs with Equip/Unequip
- *   buttons (equipping puts one in your hand — walk to your pen and press F to place it)
- * - Pets: "N/M Active", "+1 SLOT [$cost]", each pet with Equip/Unequip, and Equip Best
+ * Right-docked pen panel (reference layout), opened by the Egg and Paw buttons. Items themselves live in the
+ * 🎒 backpack; this panel manages what's in the pen:
+ * - Pets: "N/M Active", "+1 SLOT [$cost]", each pet with Equip (into the pen) / Unequip, and Equip Best
+ * - Eggs: "Growing Eggs" with progress bars / Open buttons
  */
 export class InventoryPanel {
   private el: HTMLElement;
   private body: HTMLElement;
   private title: HTMLElement;
   private headerBtn: HTMLButtonElement;
-  mode: "eggs" | "pets" | null = null;
-  private data: PanelData = { inv: null, growing: [], slots: 0, money: 0, equippedEggUid: "" };
+  mode: PanelMode | null = null;
+  private data: PanelData = { inv: null, growing: [], slots: 0, money: 0 };
 
   constructor(root: HTMLElement, private actions: PanelActions) {
     root.insertAdjacentHTML(
@@ -79,13 +69,11 @@ export class InventoryPanel {
       if (act === "equip") actions.equip(id!, true);
       if (act === "unequip") actions.equip(id!, false);
       if (act === "best") actions.equipBest();
-      if (act === "equip-egg") actions.equipEgg(id!);
-      if (act === "unequip-egg") actions.unequipEgg();
       if (act === "hatch") actions.hatch(id!);
     });
   }
 
-  toggle(mode: "eggs" | "pets") {
+  toggle(mode: PanelMode) {
     if (this.mode === mode) return this.close();
     this.mode = mode;
     this.el.hidden = false;
@@ -146,8 +134,7 @@ export class InventoryPanel {
   }
 
   private renderEggs() {
-    const { inv, growing, slots } = this.data;
-    const used = growing.length + (inv?.pets.filter((p) => p.equipped).length ?? 0);
+    const { growing } = this.data;
     this.title.textContent = "Growing Eggs";
     this.headerBtn.hidden = false;
     this.headerBtn.textContent = "Grow All";
@@ -167,22 +154,8 @@ export class InventoryPanel {
         }
       </div>`;
     });
-    const backpack = (inv?.eggs ?? []).map((e) => {
-      const def = EGG_BY_ID.get(e.defId)!;
-      const isEquipped = e.uid === this.data.equippedEggUid;
-      return `<div class="inv-row${isEquipped ? " on" : ""}">
-        <div class="inv-icon" style="border-color:${RARITY_COLOR[def.rarity]}">🥚</div>
-        <div class="inv-info"><div class="inv-name" style="color:${RARITY_COLOR[def.rarity]}">${esc(def.name)}</div>
-          <div class="inv-sub">${def.rarity} · size ${e.size.toFixed(2)}</div></div>
-        ${
-          isEquipped
-            ? `<button class="inv-btn red" data-act="unequip-egg">Unequip</button>`
-            : `<button class="inv-btn green" data-act="equip-egg" data-id="${e.uid}" ${used >= slots ? "disabled title='Pen is full'" : ""}>Equip</button>`
-        }
-      </div>`;
-    });
     this.body.innerHTML =
-      (rows.length ? rows.join("") : `<div class="inv-empty">Nothing growing. Equip an egg below, then place it in your pen!</div>`) +
-      (backpack.length ? `<div class="inv-sep">Backpack</div>${backpack.join("")}` : "");
+      (rows.length ? rows.join("") : `<div class="inv-empty">Nothing growing. Hold an egg from your hotbar and press F in your pen!</div>`) +
+      `<div class="inv-empty">Unplanted eggs are in your backpack (🎒).</div>`;
   }
 }

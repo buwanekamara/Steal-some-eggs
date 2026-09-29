@@ -18,7 +18,6 @@ interface PenPlayerView {
   penSlots: number;
   pets: Map<string, { species: string; weight: number; mutation: string; income: number }>;
   penEggs: Map<string, { defId: string; size: number; x: number; z: number; growSec: number; readyIn: number }>;
-  equippedEggUid: string;
 }
 
 interface Pen {
@@ -205,10 +204,10 @@ export class PenController {
       const entity = this.pens.get(this.room.sessionId)?.eggs.get(uid);
       return { uid, defId: e.defId, readyIn: entity && entity.ready ? 0 : e.readyIn, growSec: e.growSec };
     });
-    this.ctx.panel.update({ inv: this.inv, growing, slots: m.penSlots, money: m.money, equippedEggUid: m.equippedEggUid });
+    this.ctx.panel.update({ inv: this.inv, growing, slots: m.penSlots, money: m.money });
   }
 
-  /** Hatch prompt (hold E) for ready eggs standing nearby. Placing a backpack egg is now equip (Eggs panel) + use (F), not a prompt. */
+  /** Hatch prompt (hold E) for ready eggs standing nearby. Placing an egg is: hold it from the hotbar, then Use (F) in your pen. */
   private offerPrompts() {
     const { me, prompts } = this.ctx;
     const m = this.mine;

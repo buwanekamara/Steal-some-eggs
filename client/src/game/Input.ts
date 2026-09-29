@@ -1,9 +1,29 @@
+/** Use-button look per held item kind (touch). */
+const USE_BUTTON: Record<string, { icon: string; label: string }> = {
+  bat: { icon: "🏏", label: "Swing" },
+  trap: { icon: "🪤", label: "Place" },
+  egg: { icon: "✋", label: "Place" },
+  pet: { icon: "✋", label: "Place" },
+};
+
+/** Standard-mapping gamepad buttons → the key codes the game already listens for. */
+const PAD_KEYS: Record<number, string> = {
+  2: "KeyF", // X: use
+  7: "KeyF", // right trigger: use
+  3: "KeyB", // Y: backpack
+  4: "HotbarPrev", // LB
+  5: "HotbarNext", // RB
+  1: "Escape", // B: close menus
+};
+
 /**
- * Keyboard + touch input. Produces a move vector in camera space
- * (x = right, y = forward, each -1..1) and a jump flag.
+ * Keyboard + touch + gamepad input. Produces a move vector in camera space
+ * (x = right, y = forward, each -1..1), a jump flag, and a camera look vector (gamepad right stick).
  */
 export class Input {
   readonly move = { x: 0, y: 0 };
+  /** Right stick, for the camera (-1..1). */
+  readonly look = { x: 0, y: 0 };
   jump = false;
   readonly isTouch = matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
 
@@ -11,7 +31,9 @@ export class Input {
   private stick = { active: false, id: -1, ox: 0, oy: 0, x: 0, y: 0 };
   private stickBase?: HTMLDivElement;
   private stickKnob?: HTMLDivElement;
+  private useBtn?: HTMLButtonElement;
   private listeners: Array<(key: string) => void> = [];
+  private padDown = new Set<number>();
 
   constructor(private ui: HTMLElement) {
     addEventListener("keydown", (e) => {
@@ -51,6 +73,11 @@ export class Input {
       x = this.stick.x;
       y = this.stick.y;
     }
+    const pad = this.pollGamepad();
+    if (pad && !x && !y) {
+      x = pad.x;
+      y = pad.y;
+    }
     const len = Math.hypot(x, y);
     if (len > 1) {
       x /= len;
@@ -58,7 +85,34 @@ export class Input {
     }
     this.move.x = x;
     this.move.y = y;
-    this.jump = k("Space") || this.touchJump;
+    this.jump = k("Space") || this.touchJump || !!pad?.jump;
+  }
+
+  /** Touch: the Use button only shows while you're holding something, labelled for what it does. */
+  setUseButton(kind: string) {
+    if (!this.useBtn) return;
+    const look = USE_BUTTON[kind];
+    this.useBtn.hidden = !look;
+    if (look) this.useBtn.innerHTML = `${look.icon}<small>${look.label}</small>`;
+  }
+
+  /** First connected gamepad (standard mapping): sticks, A = jump, other buttons fire key codes on press. */
+  private pollGamepad(): { x: number; y: number; jump: boolean } | null {
+    const pad = navigator.getGamepads?.().find((g) => g && g.connected);
+    if (!pad) {
+      this.look.x = this.look.y = 0;
+      return null;
+    }
+    const dz = (v: number) => (Math.abs(v) < 0.2 ? 0 : v);
+    this.look.x = dz(pad.axes[2] ?? 0);
+    this.look.y = dz(pad.axes[3] ?? 0);
+    for (const [i, code] of Object.entries(PAD_KEYS)) {
+      const pressed = !!pad.buttons[+i]?.pressed;
+      if (pressed && !this.padDown.has(+i)) this.listeners.forEach((l) => l(code));
+      if (pressed) this.padDown.add(+i);
+      else this.padDown.delete(+i);
+    }
+    return { x: dz(pad.axes[0] ?? 0), y: -dz(pad.axes[1] ?? 0), jump: !!pad.buttons[0]?.pressed };
   }
 
   // ------------------------------------------------------------------ touch
@@ -86,20 +140,21 @@ export class Input {
     jump.addEventListener("touchend", () => (this.touchJump = false));
     this.ui.appendChild(jump);
 
-    const bat = el("button", "bat-btn");
-    bat.innerHTML = "🏏";
-    bat.addEventListener("touchstart", (e) => {
+    const use = el("button", "use-btn");
+    use.hidden = true;
+    use.addEventListener("touchstart", (e) => {
       e.preventDefault();
       this.listeners.forEach((l) => l("KeyF"));
     });
-    this.ui.appendChild(bat);
+    this.ui.appendChild(use);
+    this.useBtn = use;
 
     const R = 60;
     addEventListener(
       "touchstart",
       (e) => {
         for (const t of Array.from(e.changedTouches)) {
-          if (this.stick.active || !this.isStickArea(t.clientX) || (t.target as HTMLElement).closest("button,.panel")) continue;
+          if (this.stick.active || !this.isStickArea(t.clientX) || (t.target as HTMLElement).closest("button,.panel,.bp")) continue;
           Object.assign(this.stick, { active: true, id: t.identifier, ox: t.clientX, oy: t.clientY, x: 0, y: 0 });
           this.stickBase!.hidden = false;
           this.stickBase!.style.transform = `translate(${t.clientX - R}px, ${t.clientY - R}px)`;

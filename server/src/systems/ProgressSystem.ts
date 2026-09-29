@@ -23,6 +23,7 @@ import {
   type ShopBuyMsg,
 } from "@egg/shared";
 import type { OwnedPet } from "../persistence/ProfileStore.ts";
+import { grantTool, stash } from "./Inventory.ts";
 import type { PenSystem } from "./PenSystem.ts";
 
 export interface ProgressHooks {
@@ -125,7 +126,9 @@ export class ProgressSystem {
       profile.gems -= bundle.gems;
       const def = EGG_BY_ID.get(FEATURED.eggId)!;
       for (let i = 0; i < bundle.count; i++) {
-        profile.eggs.push({ uid: newUid("e"), defId: def.id, size: +(EGG_SIZE.min + Math.random() * (EGG_SIZE.max - EGG_SIZE.min)).toFixed(2), obtainedAt: this.now() });
+        const uid = newUid("e");
+        profile.eggs.push({ uid, defId: def.id, size: +(EGG_SIZE.min + Math.random() * (EGG_SIZE.max - EGG_SIZE.min)).toFixed(2), obtainedAt: this.now() });
+        stash(profile, uid);
       }
       p.eggCount = profile.eggs.length;
       this.hooks.notify(sessionId, `${bundle.count}× ${def.name} added to your backpack!`, "good");
@@ -139,6 +142,7 @@ export class ProgressSystem {
     if (item.speedBoostMin) profile.boostUntil = Math.max(profile.boostUntil, this.now()) + item.speedBoostMin * 60_000;
     if (item.speed) p.speedStat += item.speed;
     if (item.money) p.money += Math.max(item.money.flat, Math.round(p.income * item.money.incomeSeconds));
+    if (item.tool) grantTool(profile, item.tool.kind, item.tool.qty, this.now());
     this.hooks.notify(sessionId, `Bought ${item.title}!`, "good");
     this.pens.changed(sessionId);
   }
@@ -214,6 +218,7 @@ export class ProgressSystem {
       obtainedAt: this.now(),
     };
     o.profile.pets.push(pet);
+    stash(o.profile, pet.uid);
     if (!o.profile.discovered.includes(def.id)) o.profile.discovered.push(def.id);
     this.pens.changed(sessionId);
   }

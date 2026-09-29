@@ -17,6 +17,8 @@ import {
   hatchOdds,
   petDisplayName,
   petIncome,
+  eggSellValue,
+  type InvEgg,
   type InvPet,
   type InventoryMsg,
 } from "@egg/shared";
@@ -46,6 +48,19 @@ const petCard = (p: InvPet, extra = "", selected = false) => {
     <span class="pc-icon">${def.icon}</span>
     <span class="pc-name" style="color:${mut ? mut.color : "#fff"}">${esc(petDisplayName(def, p.mutation))}</span>
     <span class="pc-inc">$${formatShort(p.income)}/s</span>${extra}
+  </button>`;
+};
+
+const price = (v: number) => `<span class="pc-price">$${formatShort(v)}</span>`;
+
+/** An unhatched egg, styled like a pet card (size where the pet shows Kg, rarity where it shows $/s). */
+const eggCard = (e: InvEgg, extra = "", selected = false) => {
+  const def = EGG_BY_ID.get(e.defId)!;
+  return `<button class="pet-card${selected ? " sel" : ""}" data-uid="${e.uid}" style="--rc:${RARITY_COLOR[def.rarity]}">
+    <span class="pc-kg">size ${e.size.toFixed(2)}</span>
+    <span class="pc-icon">🥚</span>
+    <span class="pc-name">${esc(def.name)}</span>
+    <span class="pc-inc">${def.rarity} egg</span>${extra}
   </button>`;
 };
 
@@ -81,12 +96,13 @@ export class Menus {
       { id: "featured", label: "Featured", icon: "🏷️", color: "#ff5a3a" },
       { id: "speed", label: "Speed", icon: "👟", color: "#2f9bff" },
       { id: "money", label: "Money", icon: "💵", color: "#4ce11f" },
+      { id: "gear", label: "Gear", icon: "🏏", color: "#c9944f" },
     ]);
     this.index = new Modal(root, "Pet Index", "#1fc0ff", [
       { id: "world", label: "World", icon: "🌍", color: "#1f8bff" },
       { id: "limited", label: "Limited", icon: "⏳", color: "#b8860b" },
     ]);
-    this.sellM = new Modal(root, "🐾 Sell Pets", "#4ce11f");
+    this.sellM = new Modal(root, "💰 Sell Pets & Eggs", "#4ce11f");
     this.fuseM = new Modal(root, "Fuse Machine", "#8a4dff");
     this.trails = new Modal(root, "Trails Shop", "#c04dff");
     for (const m of [this.shop, this.index, this.sellM, this.fuseM, this.trails]) m.onTab = () => this.render(m);
@@ -227,15 +243,41 @@ export class Menus {
     <button class="claim-all" data-claim="all" ${this.unclaimed ? "" : "disabled"}>📘 CLAIM ALL (${this.unclaimed})!</button>`;
   }
 
+  /** Only items sitting in the inventory can be sold or fused: not pets in the pen, not anything on the hotbar. */
+  private inInventory(uid: string, inPen = false) {
+    return !inPen && !(this.data.inv?.hotbar ?? []).includes(uid);
+  }
+
+  /** Why some owned items aren't listed (null when nothing is held back). */
+  private heldBackNote(what: string) {
+    const inv = this.data.inv;
+    if (!inv) return "";
+    const held = inv.pets.filter((p) => !this.inInventory(p.uid, p.equipped)).length + (what === "sell" ? inv.eggs.filter((e) => !this.inInventory(e.uid)).length : 0);
+    return held ? `<div class="shop-note">${held} item${held === 1 ? " is" : "s are"} in your pen or on your hotbar — take ${held === 1 ? "it" : "them"} out (🎒) to ${what} ${held === 1 ? "it" : "them"}.</div>` : "";
+  }
+
+  /** Sellable pets and eggs, with their sale price. */
   private sellList() {
-    const pets = [...(this.data.inv?.pets ?? [])];
-    return this.sellSort === "weight" ? pets.sort((a, b) => b.weight - a.weight) : pets.sort((a, b) => b.income - a.income);
+    const inv = this.data.inv;
+    if (!inv) return [];
+    const items = [
+      ...inv.pets
+        .filter((p) => this.inInventory(p.uid, p.equipped))
+        .map((p) => ({ uid: p.uid, value: p.income * SELL_MULT, weight: p.weight, card: (sel: boolean) => petCard(p, price(p.income * SELL_MULT), sel) })),
+      ...inv.eggs
+        .filter((e) => this.inInventory(e.uid))
+        .map((e) => {
+          const value = eggSellValue(e.defId, e.size);
+          return { uid: e.uid, value, weight: e.size, card: (sel: boolean) => eggCard(e, price(value), sel) };
+        }),
+    ];
+    return this.sellSort === "weight" ? items.sort((a, b) => b.weight - a.weight) : items.sort((a, b) => b.value - a.value);
   }
 
   private renderSell() {
-    const pets = this.sellList();
-    for (const uid of [...this.sellSel]) if (!pets.some((p) => p.uid === uid)) this.sellSel.delete(uid);
-    const total = pets.filter((p) => this.sellSel.has(p.uid)).reduce((a, p) => a + p.income * SELL_MULT, 0);
+    const items = this.sellList();
+    for (const uid of [...this.sellSel]) if (!items.some((p) => p.uid === uid)) this.sellSel.delete(uid);
+    const total = items.filter((p) => this.sellSel.has(p.uid)).reduce((a, p) => a + p.value, 0);
     this.sellM.body.innerHTML = `<div class="sell">
       <div class="sell-side">
         <b>Sort By:</b>
@@ -243,13 +285,14 @@ export class Menus {
         <button class="side-btn${this.sellSort === "value" ? " sel" : ""}" data-sort="value">Value</button>
         <button class="side-btn" data-selall>Select All</button>
       </div>
-      <div class="card-grid">${pets.length ? pets.map((p) => petCard(p, `<span class="pc-price">$${formatShort(p.income * SELL_MULT)}</span>`, this.sellSel.has(p.uid))).join("") : `<div class="inv-empty">No pets to sell.</div>`}</div>
+      <div class="card-grid">${items.length ? items.map((p) => p.card(this.sellSel.has(p.uid))).join("") : `<div class="inv-empty">Nothing to sell in your inventory.</div>`}</div>
     </div>
+    ${this.heldBackNote("sell")}
     <div class="modal-foot"><span>Total Value: <b>$${formatShort(total)}</b></span><button class="big-go" data-sell ${this.sellSel.size ? "" : "disabled"}>Sell</button></div>`;
   }
 
   private renderFuse() {
-    const pets = [...(this.data.inv?.pets ?? [])].sort((a, b) => a.species.localeCompare(b.species) || b.weight - a.weight);
+    const pets = [...(this.data.inv?.pets ?? [])].filter((p) => this.inInventory(p.uid, p.equipped)).sort((a, b) => a.species.localeCompare(b.species) || b.weight - a.weight);
     this.fuseSel = this.fuseSel.filter((u) => pets.some((p) => p.uid === u));
     const picked = this.fuseSel.map((u) => pets.find((p) => p.uid === u)!);
     const species = picked[0]?.species;
@@ -262,7 +305,8 @@ export class Menus {
     this.fuseM.body.innerHTML = `<div class="fuse-top"><div class="fuse-title">Bring ${FUSE.inputs} same Pets to Fuse</div>
       <div class="fuse-sub">Better pets give more luck 🍀 (mutations can carry over)</div>
       <div class="fuse-row">${slots}<span class="fuse-arrow">➜</span><div class="fuse-slot out">${out ? `${PET_BY_ID.get(species!)!.icon}<small>${out}Kg</small>` : "❓"}</div></div></div>
-      <div class="card-grid">${eligible.map((p) => petCard(p, "", this.fuseSel.includes(p.uid))).join("") || `<div class="inv-empty">You need 3 of the same pet.</div>`}</div>
+      <div class="card-grid">${eligible.map((p) => petCard(p, "", this.fuseSel.includes(p.uid))).join("") || `<div class="inv-empty">You need 3 of the same pet in your inventory.</div>`}</div>
+      ${this.heldBackNote("fuse")}
       <div class="modal-foot"><span>${picked.length < FUSE.inputs ? `${FUSE.inputs - picked.length} Pet${FUSE.inputs - picked.length > 1 ? "s" : ""} Left` : "Ready!"}</span>
       <button class="big-go" data-fuse ${picked.length === FUSE.inputs ? "" : "disabled"}>Fuse</button></div>`;
   }

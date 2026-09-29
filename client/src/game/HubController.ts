@@ -126,7 +126,7 @@ export class HubController {
 
     // Stalls and machines open their menus.
     for (const [b, title, action, open] of [
-      [HUB_BUILDINGS.sell, "SELL", "Sell Pets", "sell"],
+      [HUB_BUILDINGS.sell, "SELL", "Sell Pets & Eggs", "sell"],
       [HUB_BUILDINGS.fuse, "Fuse Machine", "Fuse Pets", "fuse"],
       [HUB_BUILDINGS.trails, "Trails Shop", "Browse Trails", "trails"],
     ] as const) {

@@ -42,12 +42,16 @@ export class Guardian {
     this.root.add(this.label);
   }
 
-  push(x: number, z: number, ry: number, mode: GuardianMode) {
+  private stunned = false;
+
+  push(x: number, z: number, ry: number, mode: GuardianMode, stunned = false) {
     this.buf.push({ t: performance.now(), x, z, ry });
     if (this.buf.length > 30) this.buf.shift();
-    if (mode !== this.mode) {
+    if (mode !== this.mode || stunned !== this.stunned) {
       this.mode = mode;
-      if (mode === GuardianMode.Sleep) this.label.setLines([{ text: "Z z", color: "#39c6ff" }]);
+      this.stunned = stunned;
+      if (stunned) this.label.setLines([{ text: "💫", size: 1.2 }]);
+      else if (mode === GuardianMode.Sleep) this.label.setLines([{ text: "Z z", color: "#39c6ff" }]);
       else if (mode === GuardianMode.Alert) this.label.setLines([{ text: "!", color: "#ff3030", size: 1.6 }]);
       else this.label.setLines("");
     }
@@ -80,7 +84,7 @@ export class Guardian {
     this.body.position.y = asleep ? -0.5 + Math.sin(this.time * 1.5) * 0.06 : 0;
     this.body.rotation.x = asleep ? 0.12 : peck;
     this.label.position.y = this.height + 0.6 + (asleep ? Math.sin(this.time * 2) * 0.3 : 0);
-    this.label.visible = asleep || this.mode === GuardianMode.Alert;
+    this.label.visible = this.stunned || asleep || this.mode === GuardianMode.Alert;
   }
 
   dispose() {

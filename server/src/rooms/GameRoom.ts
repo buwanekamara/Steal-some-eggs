@@ -19,6 +19,7 @@ import {
   basePlot,
   clampToWorld,
   formatShort,
+  groundHeightAt,
   isOnBelt,
   newUid,
   sanitizeName,
@@ -26,8 +27,9 @@ import {
   trailMult,
   useSpot,
   walkSpeedFromStat,
+  type CooldownMsg,
   type CorrectMsg,
-  type EquipMsg,
+  type UseMsg,
   type JoinOptions,
   type KnockMsg,
   type MoveMsg,
@@ -40,6 +42,7 @@ import { GameState, PlayerState, TrapState } from "../schema/GameState.ts";
 import { HeistSystem } from "../systems/HeistSystem.ts";
 import { PenSystem } from "../systems/PenSystem.ts";
 import { ProgressSystem } from "../systems/ProgressSystem.ts";
+import { consumeTool, grantTool, resolveItem, stash } from "../systems/Inventory.ts";
 
 /** Server-side bookkeeping that is not synced to clients. */
 interface PlayerMeta {
@@ -56,8 +59,6 @@ interface PlayerMeta {
   knockSpeed: number;
   /** Next time (ms timestamp) this player's bat is ready to swing again. */
   batReadyAt: number;
-  /** Next time (ms timestamp) a trap charge regenerates (0 = already full). */
-  trapRegenAt: number;
 }
 
 /** Testing shortcuts; disabled when NODE_ENV=production. */
@@ -94,7 +95,9 @@ export class GameRoom extends Room<{ state: GameState }> {
       const m = this.meta.get(id);
       const p = this.state.players.get(id);
       if (!m || !p) return;
-      m.profile.eggs.push({ uid: newUid("e"), defId: def.id, size, obtainedAt: Date.now() });
+      const eggUid = newUid("e");
+      m.profile.eggs.push({ uid: eggUid, defId: def.id, size, obtainedAt: Date.now() });
+      stash(m.profile, eggUid);
       m.profile.stats.eggsSecured++;
       p.eggCount = m.profile.eggs.length;
       const msg: SecuredMsg = { defId: def.id, size, total: p.eggCount };
@@ -136,7 +139,6 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.onMessage(MSG.Drop, (client) => this.heist.drop(client.sessionId));
     this.heist.init();
 
-    this.onMessage(MSG.Plant, (client) => this.pens.plant(client.sessionId));
     this.onMessage(MSG.Hatch, (client, id: unknown) => this.pens.hatch(client.sessionId, id));
     this.onMessage(MSG.Equip, (client, id: unknown) => this.pens.equip(client.sessionId, id, true));
     this.onMessage(MSG.Unequip, (client, id: unknown) => this.pens.equip(client.sessionId, id, false));
@@ -155,11 +157,13 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.onMessage(MSG.ShopBuy, (client, msg: unknown) => this.progress.shopBuy(client.sessionId, typeof msg === "object" && msg ? (msg as ShopBuyMsg) : undefined));
     this.onMessage(MSG.ClaimIndex, (client, which: unknown) => this.progress.claimIndex(client.sessionId, which));
     this.onMessage(MSG.ClaimPotion, (client) => this.claimPotion(client));
-    this.onMessage(MSG.BatHit, (client) => this.batHit(client));
     this.onMessage(MSG.ClaimChest, (client) => this.claimChest(client));
     this.onMessage(MSG.ClaimOffline, (client) => this.claimOffline(client));
-    this.onMessage(MSG.EquipTool, (client, tool: unknown) => this.equipTool(client, tool));
-    this.onMessage(MSG.PlaceTrap, (client) => this.placeTrap(client));
+    this.onMessage(MSG.SelectSlot, (client, slot: unknown) => this.pens.select(client.sessionId, slot));
+    this.onMessage(MSG.HotbarSet, (client, msg: unknown) => this.pens.hotbarSet(client.sessionId, msg));
+    this.onMessage(MSG.HotbarClear, (client, slot: unknown) => this.pens.hotbarClear(client.sessionId, slot));
+    this.onMessage(MSG.HotbarSwap, (client, msg: unknown) => this.pens.hotbarSwap(client.sessionId, msg));
+    this.onMessage(MSG.Use, (client, msg: unknown) => this.useItem(client, typeof msg === "object" && msg ? (msg as UseMsg) : {}));
 
     if (DEV_CHEATS) {
       this.onMessage(MSG.DevSpeed, (client, action: unknown) => {
@@ -205,7 +209,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.state.players.set(client.sessionId, p);
 
     const now = Date.now();
-    const meta: PlayerMeta = { profileId, profile, lastMoveAt: now, lastSaveAt: now, stepAccum: 0, released: false, knockUntil: 0, knockSpeed: 0, batReadyAt: 0, trapRegenAt: 0 };
+    const meta: PlayerMeta = { profileId, profile, lastMoveAt: now, lastSaveAt: now, stepAccum: 0, released: false, knockUntil: 0, knockSpeed: 0, batReadyAt: 0 };
     this.meta.set(client.sessionId, meta);
     this.pens.attach(client.sessionId, p, profile);
 
@@ -226,6 +230,8 @@ export class GameRoom extends Room<{ state: GameState }> {
     const p = this.state.players.get(client.sessionId);
     const m = this.meta.get(client.sessionId);
     this.heist.playerLeft(client.sessionId);
+    // Their traps leave with them (unused ones stay safe in the saved inventory).
+    this.state.traps.forEach((t, id) => t.ownerId === client.sessionId && this.state.traps.delete(id));
     if (m && !m.released) {
       await this.saveProfile(client.sessionId);
       activeSessions.delete(m.profileId);
@@ -247,7 +253,6 @@ export class GameRoom extends Room<{ state: GameState }> {
       const m = this.meta.get(sessionId);
       if (!m) return;
       this.train(p, m, dt);
-      this.regenTraps(p, m);
     });
     this.heist.tick(dt);
     this.tickTraps();
@@ -313,32 +318,73 @@ export class GameRoom extends Room<{ state: GameState }> {
     }
   }
 
-  /** Swing the bat: hits the nearest player roughly in front of you, in range and outside the safe zone (carrying or not — racing for an egg is a fair fight too). */
-  private batHit(client: Client) {
+  /** Use: the server decides what the held item does (the client only asks). */
+  private useItem(client: Client, msg: UseMsg) {
     const p = this.state.players.get(client.sessionId);
     const m = this.meta.get(client.sessionId);
-    if (!p || !m || p.equipped !== "bat") return;
-    if (p.z < SAFE_ZONE_Z) return this.notify(client, "Can't use the bat in the safe zone.", "bad");
+    if (!p || !m) return;
+    if (Date.now() < m.knockUntil) return; // stunned: can't act
+    switch (p.equipped) {
+      case "egg":
+        return this.pens.plant(client.sessionId);
+      case "pet":
+        return this.pens.placePet(client.sessionId);
+      case "bat":
+        return this.batHit(client, p, m);
+      case "trap":
+        return this.placeTrap(client, p, m, msg);
+      default:
+        return this.notify(client, "Pick an item on your hotbar first (keys 1–0).", "bad");
+    }
+  }
+
+  /** The held item must still be owned and be what the hand says it is. */
+  private heldTool(p: PlayerState, m: PlayerMeta, kind: "bat" | "trap") {
+    const ref = resolveItem(m.profile, p.equippedUid);
+    return ref?.kind === kind ? ref : null;
+  }
+
+  /**
+   * Swing the bat at the nearest valid target roughly in front of you: a player (carrying or not — racing for an
+   * egg is a fair fight too) or a guardian. A swing that misses still uses the cooldown.
+   */
+  private batHit(client: Client, p: PlayerState, m: PlayerMeta) {
+    if (!this.heldTool(p, m, "bat")) return;
+    if (PVP.blockedInSafeZone && p.z < SAFE_ZONE_Z) return this.notify(client, "Can't use the bat in the safe zone.", "bad");
     const now = Date.now();
-    if (now < m.knockUntil || now < m.batReadyAt) return;
+    if (now < m.batReadyAt) return;
     m.batReadyAt = now + PVP.cooldownSec * 1000;
+    const cd: CooldownMsg = { kind: "bat", sec: PVP.cooldownSec };
+    client.send(MSG.Cooldown, cd);
 
-    let targetId: string | null = null;
-    let bestDist: number = PVP.hitRange;
-    this.state.players.forEach((other, otherId) => {
-      if (otherId === client.sessionId || other.z < SAFE_ZONE_Z) return;
-      const dx = other.x - p.x;
-      const dz = other.z - p.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > bestDist) return;
-      let diff = Math.abs(Math.atan2(dx, dz) - p.ry);
+    const arc = (PVP.arcDeg * Math.PI) / 180;
+    const inArc = (x: number, z: number) => {
+      let diff = Math.abs(Math.atan2(x - p.x, z - p.z) - p.ry);
       if (diff > Math.PI) diff = 2 * Math.PI - diff;
-      if (diff > (PVP.arcDeg * Math.PI) / 180) return;
-      targetId = otherId;
-      bestDist = dist;
-    });
-    if (!targetId) return;
+      return diff <= arc;
+    };
+    // Rank by how deep inside its hitbox each target is, so a guardian's bigger box doesn't always win.
+    let hit: { kind: "player" | "guardian"; id: string; depth: number } | null = null;
+    const consider = (kind: "player" | "guardian", id: string, x: number, z: number, reach: number) => {
+      const dist = Math.hypot(x - p.x, z - p.z);
+      if (dist > reach || !inArc(x, z)) return;
+      if (!hit || dist - reach < hit.depth) hit = { kind, id, depth: dist - reach };
+    };
+    if (PVP.hitsPlayers) {
+      this.state.players.forEach((other, id) => {
+        if (id !== client.sessionId && !(PVP.blockedInSafeZone && other.z < SAFE_ZONE_Z)) consider("player", id, other.x, other.z, PVP.hitRange);
+      });
+    }
+    if (PVP.hitsGuardians) this.state.guardians.forEach((g, id) => consider("guardian", id, g.x, g.z, PVP.hitRange + PVP.guardianHitPadding));
+    const target0 = hit as { kind: "player" | "guardian"; id: string } | null;
+    if (!target0) return;
 
+    if (target0.kind === "guardian") {
+      const def = this.heist.stunGuardian(target0.id, PVP.guardianStunSec * 1000);
+      if (def) this.notify(client, `Bapped the ${def.name}! It's dazed.`, "good");
+      return;
+    }
+    const targetId = target0.id;
     const target = this.state.players.get(targetId)!;
     const hadEgg = !!target.carrying;
     this.heist.drop(targetId);
@@ -360,77 +406,75 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.notify(client, hadEgg ? `Bapped ${target.name}! Their egg dropped.` : `Bapped ${target.name}!`, "good");
   }
 
-  /** Hold "" / "bat" / "trap" — always allowed, even in the safe zone (only using it is restricted). */
-  private equipTool(client: Client, msg: unknown) {
-    const p = this.state.players.get(client.sessionId);
-    const m = this.meta.get(client.sessionId);
-    if (!p || !m || typeof msg !== "object" || !msg) return;
-    const { tool, eggUid } = msg as EquipMsg;
-    if (tool !== "" && tool !== "bat" && tool !== "trap" && tool !== "egg") return;
+  /** Place one bear trap at the requested spot (the client's preview); the server has the final say on where. */
+  private placeTrap(client: Client, p: PlayerState, m: PlayerMeta, msg: UseMsg) {
+    const tool = this.heldTool(p, m, "trap");
+    if (!tool) return;
+    const { x, z } = msg;
+    if (!isNum(x) || !isNum(z)) return;
+    if (!TRAP.allowInSafeZone && (p.z < SAFE_ZONE_Z || z < SAFE_ZONE_Z)) return this.notify(client, "Can't place traps in the safe zone.", "bad");
+    if (Math.hypot(x - p.x, z - p.z) > TRAP.placeRange) return this.notify(client, "That's too far away to place a trap.", "bad");
+    // Inside the walls and on the floor. With both you and the spot past the safe-zone line, you're both inside
+    // the straight corridor, so the line between you can't pass through a wall.
+    const inside = clampToWorld(x, z, 0.5);
+    if (Math.abs(inside.x - x) > 0.01 || Math.abs(inside.z - z) > 0.01 || groundHeightAt(x, z) !== 0) return this.notify(client, "You can't place a trap there.", "bad");
+    if (this.state.isNight && z >= SAFE_ZONE_Z) return this.notify(client, "The biomes are sealed off for the night.", "bad");
+    let mine = 0;
+    let crowded = false;
+    this.state.traps.forEach((t) => {
+      if (t.ownerId === client.sessionId) mine++;
+      if (Math.hypot(t.x - x, t.z - z) < TRAP.minSpacing) crowded = true;
+    });
+    if (mine >= TRAP.maxActive) return this.notify(client, `You already have ${TRAP.maxActive} traps out.`, "bad");
+    if (crowded) return this.notify(client, "There's already a trap right there.", "bad");
+    if (!consumeTool(m.profile, tool.uid)) return this.notify(client, "You're out of bear traps.", "bad");
 
-    if (tool === "egg") {
-      const owned = m.profile.eggs.find((e) => e.uid === eggUid);
-      if (!owned) return;
-      p.equipped = "egg";
-      p.equippedEggUid = owned.uid;
-      p.equippedEggDefId = owned.defId;
-      return;
-    }
-    p.equipped = tool;
-    p.equippedEggUid = "";
-    p.equippedEggDefId = "";
-  }
-
-  /** A trap charge regenerates every TRAP.rechargeSec while below the cap. */
-  private regenTraps(p: PlayerState, m: PlayerMeta) {
-    if (p.trapsAvailable >= TRAP.maxCarried) {
-      m.trapRegenAt = 0;
-      return;
-    }
-    const now = Date.now();
-    if (!m.trapRegenAt) m.trapRegenAt = now + TRAP.rechargeSec * 1000;
-    if (now < m.trapRegenAt) return;
-    p.trapsAvailable++;
-    m.trapRegenAt = p.trapsAvailable >= TRAP.maxCarried ? 0 : now + TRAP.rechargeSec * 1000;
-  }
-
-  /** Drop a trap at my feet: must have it equipped, a charge free, and be outside the safe zone. */
-  private placeTrap(client: Client) {
-    const p = this.state.players.get(client.sessionId);
-    const m = this.meta.get(client.sessionId);
-    if (!p || !m || p.equipped !== "trap") return;
-    if (p.z < SAFE_ZONE_Z) return this.notify(client, "Can't place traps in the safe zone.", "bad");
-    if (p.trapsAvailable <= 0) return this.notify(client, "No traps left — wait for one to recharge.", "bad");
-    p.trapsAvailable--;
     const trap = new TrapState();
-    trap.x = p.x;
-    trap.z = p.z;
+    trap.x = x;
+    trap.z = z;
     trap.ownerId = client.sessionId;
     trap.placedAt = Date.now();
-    this.state.traps.set(`t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, trap);
-    this.notify(client, "Trap placed!", "good");
+    this.state.traps.set(newUid("t"), trap);
+    this.pens.changed(client.sessionId); // the stack count (and the slot, if it ran out) update right away
   }
 
-  /** Traps expire on their own, and catch the first non-owner who steps within range: drop their egg, stun them. */
+  /** Traps expire on their own, and catch the first valid target to step in: drop their egg, immobilize them. */
   private tickTraps() {
     const now = Date.now();
     const gone: string[] = [];
     this.state.traps.forEach((trap, id) => {
       if (now - trap.placedAt > TRAP.lifetimeSec * 1000) return void gone.push(id);
-      let triggered = false;
-      this.state.players.forEach((p, sessionId) => {
-        if (triggered || sessionId === trap.ownerId) return;
-        if (Math.hypot(p.x - trap.x, p.z - trap.z) > TRAP.triggerRadius) return;
-        triggered = true;
-        const hadEgg = !!p.carrying;
-        this.heist.drop(sessionId);
-        const owner = this.state.players.get(trap.ownerId);
-        const knockMsg: KnockMsg = { vx: 0, vy: 6, vz: 0, stunMs: TRAP.stunSec * 1000, by: owner?.name, kind: "trap", droppedEgg: hadEgg };
-        this.knock(sessionId, knockMsg);
-        const ownerClient = this.clients.getById(trap.ownerId);
-        if (ownerClient) this.notify(ownerClient, `Your trap caught ${p.name}!`, "good");
-      });
-      if (triggered) gone.push(id);
+      const owner = this.state.players.get(trap.ownerId);
+      let caught = "";
+
+      if (TRAP.affectsPlayers) {
+        this.state.players.forEach((p, sessionId) => {
+          if (caught || (sessionId === trap.ownerId && !TRAP.ownerCanTrigger)) return;
+          if (Math.hypot(p.x - trap.x, p.z - trap.z) > TRAP.triggerRadius) return;
+          caught = p.name;
+          const hadEgg = !!p.carrying;
+          this.heist.drop(sessionId);
+          const knockMsg: KnockMsg = { vx: 0, vy: 6, vz: 0, stunMs: TRAP.stunSec * 1000, by: owner?.name, kind: "trap", droppedEgg: hadEgg };
+          this.knock(sessionId, knockMsg);
+        });
+      }
+      if (!caught && TRAP.affectsGuardians) {
+        this.state.guardians.forEach((g, gid) => {
+          if (caught || Math.hypot(g.x - trap.x, g.z - trap.z) > TRAP.triggerRadius + TRAP.guardianTriggerPadding) return;
+          const def = this.heist.stunGuardian(gid, TRAP.guardianStunSec * 1000);
+          if (def) caught = `the ${def.name}`;
+        });
+      }
+      if (!caught) return;
+
+      gone.push(id); // one trigger per trap
+      const ownerClient = this.clients.getById(trap.ownerId);
+      if (ownerClient) this.notify(ownerClient, `Your trap caught ${caught}!`, "good");
+      const ownerMeta = this.meta.get(trap.ownerId);
+      if (TRAP.afterTrigger === "return" && ownerMeta) {
+        grantTool(ownerMeta.profile, "trap", 1, now);
+        this.pens.changed(trap.ownerId);
+      }
     });
     for (const id of gone) this.state.traps.delete(id);
   }
