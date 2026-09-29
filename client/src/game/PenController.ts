@@ -49,7 +49,7 @@ interface Particle {
   t: number;
 }
 
-const POPUP_RANGE = 55;
+
 const _v = new THREE.Vector3();
 
 /**
@@ -66,6 +66,10 @@ export class PenController {
   private popups: Popup[] = [];
   private particles: Particle[] = [];
   private incomeTimer = 0;
+  /** Pet name tags and "+$" popups only within this distance of the camera (graphics setting). */
+  detailDistance = 70;
+  /** Max "+$" popups per second (graphics setting). */
+  popupBudget = 24;
   private panelTimer = 0;
 
   constructor(private ctx: PenContext) {}
@@ -185,7 +189,10 @@ export class PenController {
 
   update(dt: number) {
     for (const pen of this.pens.values()) {
-      pen.pets.forEach((p) => p.update(dt));
+      pen.pets.forEach((p) => {
+        p.update(dt);
+        p.showLabel(p.root.position.distanceTo(this.ctx.camera.position) < this.detailDistance);
+      });
       pen.eggs.forEach((e) => e.update(dt));
     }
     this.updatePopups(dt);
@@ -239,11 +246,11 @@ export class PenController {
     if (this.incomeTimer >= 1) {
       this.incomeTimer -= 1;
       const cam = this.ctx.camera.position;
-      let budget = 24;
+      let budget = this.popupBudget;
       for (const pen of this.pens.values()) {
         for (const pet of pen.pets.values()) {
           if (budget <= 0) break;
-          if (pet.root.position.distanceTo(cam) > POPUP_RANGE) continue;
+          if (pet.root.position.distanceTo(cam) > this.detailDistance) continue;
           budget--;
           const label = new TextLabel([{ text: `+$${formatShort(pet.income)}`, color: "#5dff3a" }], { lineHeight: 0.55 });
           // Start just above the pet's 3-line tag so they don't overlap.

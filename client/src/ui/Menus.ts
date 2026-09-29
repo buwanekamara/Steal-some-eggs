@@ -18,6 +18,9 @@ import {
   petDisplayName,
   petIncome,
   eggSellValue,
+  fusedEggId,
+  fusionFee,
+  rollFusionWeight,
   type InvEgg,
   type InvPet,
   type InventoryMsg,
@@ -114,7 +117,9 @@ export class Menus {
   /** Redraws open menus only when their data changed (redrawing under the mouse would swallow clicks). */
   update(data: MenuData) {
     // Money ticks every second; only the Trails Shop shows it, so leave it out of the change check elsewhere.
-    const sig = JSON.stringify({ ...data, money: this.trails.isOpen ? data.money : 0 });
+    // The Fuse Machine only cares whether you can afford the fee of the pets you picked.
+    const fuseSpecies = this.fuseM.isOpen ? this.data.inv?.pets.find((p) => p.uid === this.fuseSel[0])?.species : undefined;
+    const sig = JSON.stringify({ ...data, money: this.trails.isOpen ? data.money : 0, canFuse: fuseSpecies ? data.money >= fusionFee(fuseSpecies) : null });
     const changed = sig !== this.sig;
     this.sig = sig;
     this.data = data;
@@ -300,15 +305,28 @@ export class Menus {
       const p = picked[i];
       return p ? `<div class="fuse-slot full">${PET_BY_ID.get(p.species)!.icon}<small>${p.weight}Kg</small></div>` : `<div class="fuse-slot">+<small>Empty</small></div>`;
     }).join(`<span class="fuse-pipe"></span>`);
-    const out = picked.length === FUSE.inputs ? +(picked.reduce((a, p) => a + p.weight, 0) * FUSE.weightFactor).toFixed(1) : 0;
     const eligible = pets.filter((p) => !species || p.species === species);
+    const ready = picked.length === FUSE.inputs;
+    // Output preview: an egg of the species, with the range its weight can roll in (the server does the real roll).
+    const fee = species ? fusionFee(species) : 0;
+    const canPay = this.data.money >= fee;
+    let out = "❓";
+    let info = "3 of one pet → 1 egg of that pet";
+    if (ready) {
+      const avg = picked.reduce((a, p) => a + p.weight, 0) / picked.length;
+      const lo = rollFusionWeight(species!, [avg], 0);
+      const hi = rollFusionWeight(species!, [avg], 1);
+      out = `🥚<small>${esc(EGG_BY_ID.get(fusedEggId(species!))!.name)}</small>`;
+      info = `Hatches a ${esc(PET_BY_ID.get(species!)!.name)} of ${lo}–${hi}Kg · mutation rerolled · cost <b>$${formatShort(fee)}</b>`;
+    }
     this.fuseM.body.innerHTML = `<div class="fuse-top"><div class="fuse-title">Bring ${FUSE.inputs} same Pets to Fuse</div>
-      <div class="fuse-sub">Better pets give more luck 🍀 (mutations can carry over)</div>
-      <div class="fuse-row">${slots}<span class="fuse-arrow">➜</span><div class="fuse-slot out">${out ? `${PET_BY_ID.get(species!)!.icon}<small>${out}Kg</small>` : "❓"}</div></div></div>
+      <div class="fuse-sub">${info}</div>
+      <div class="fuse-row">${slots}<span class="fuse-arrow">➜</span><div class="fuse-slot out">${out}</div></div>
+      <div class="fuse-sub">⚠ The 3 pets are used up. It's a reroll, not a guaranteed upgrade: the egg can hatch smaller and lose a mutation.</div></div>
       <div class="card-grid">${eligible.map((p) => petCard(p, "", this.fuseSel.includes(p.uid))).join("") || `<div class="inv-empty">You need 3 of the same pet in your inventory.</div>`}</div>
       ${this.heldBackNote("fuse")}
-      <div class="modal-foot"><span>${picked.length < FUSE.inputs ? `${FUSE.inputs - picked.length} Pet${FUSE.inputs - picked.length > 1 ? "s" : ""} Left` : "Ready!"}</span>
-      <button class="big-go" data-fuse ${picked.length === FUSE.inputs ? "" : "disabled"}>Fuse</button></div>`;
+      <div class="modal-foot"><span>${!ready ? `${FUSE.inputs - picked.length} Pet${FUSE.inputs - picked.length > 1 ? "s" : ""} Left` : canPay ? "Ready!" : `Not enough money ($${formatShort(fee)})`}</span>
+      <button class="big-go" data-fuse ${ready && canPay ? "" : "disabled"}>${ready ? `Fuse · $${formatShort(fee)}` : "Fuse"}</button></div>`;
   }
 
   private renderTrails() {

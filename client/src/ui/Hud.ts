@@ -1,4 +1,5 @@
 import { WORLD_EVENTS, biomeAt, formatShort } from "@egg/shared";
+import type { GraphicsChoice, Quality, Settings } from "../game/Settings.ts";
 
 export interface PlayerRow {
   name: string;
@@ -45,6 +46,8 @@ export class Hud {
   onPawButton?: () => void;
   onOfflineClaim?: () => void;
   onBagButton?: () => void;
+  onGraphics?: (choice: GraphicsChoice) => void;
+  onSound?: (on: boolean) => void;
   /** A hotbar slot was clicked/tapped (select it, or arrange it while the inventory is open). */
   onSlotClick?: (slot: number) => void;
   /** The ✕ on a slot while arranging: take its item back to the inventory. */
@@ -64,8 +67,16 @@ export class Hud {
           <div class="slow-mode"><div class="toggle"><div class="knob"></div></div><span>Slow Mode</span></div>
         </div>
         <div class="hud-topbar">
-          <button class="tb-btn menu" title="Menu: controls (H)">☰</button>
+          <button class="tb-btn menu" title="Menu">☰</button>
           <button class="tb-btn bag" title="Inventory (B)">🎒</button>
+        </div>
+        <div class="tb-menu panel" hidden>
+          <div class="tm-row"><b>Graphics</b><span class="tm-opts">
+            <button data-gfx="auto">Auto</button><button data-gfx="high">High</button><button data-gfx="low">Low</button>
+          </span></div>
+          <div class="tm-note"></div>
+          <div class="tm-row"><b>Sound</b><span class="tm-opts"><button data-sound="on">On</button><button data-sound="off">Off</button></span></div>
+          <button class="tm-help">Controls help (H)</button>
         </div>
         <div class="hud-right">
           <button class="sq-btn egg" title="Eggs">🥚</button>
@@ -99,7 +110,8 @@ export class Hud {
         <div class="help panel">
           <b>Controls</b><br/>
           ${isTouch ? "Left thumb: move · Right side drag: camera · ⬆: jump · Tap a hotbar slot to hold it, the action button to use it · Hold 👆 on an egg: steal" : "WASD / arrows: move · Space: jump · Hold E: steal egg · 1–0: hotbar · F: use held item · B: inventory · Drag mouse: camera · Wheel: zoom"}<br/>
-          ${isTouch ? "" : "Gamepad: stick move · A jump · X use · LB/RB hotbar · Y inventory<br/>C: Slow Mode · Tab: pets · F3: debug info · H: hide this help<br/><i>Dev: = ×10 Speed stat · - reset · J: free egg · G: finish growing eggs · M: +$1M · K: +100 💎 · P: 3 Chicks · URL ?profile=name for a 2nd test player</i>"}
+          ${isTouch ? "" : "Gamepad: stick move · A jump · X use · LB/RB hotbar · Y inventory<br/>C: Slow Mode · Tab: pets · F3: debug info · H: hide this help"}
+          ${!isTouch && import.meta.env.DEV ? "<br/><i>Dev: = ×10 Speed stat · - reset · J: free egg · G: finish growing eggs · M: +$1M · K: +100 💎 · P: 3 Chicks · URL ?profile=name for a 2nd test player</i>" : ""}
         </div>
       </div>`,
     );
@@ -129,7 +141,16 @@ export class Hud {
     q(".sq-btn.paw").addEventListener("click", () => this.onPawButton?.());
     this.offlineBannerEl.querySelector(".claim-btn")!.addEventListener("click", () => this.onOfflineClaim?.());
     q(".tb-btn.bag").addEventListener("click", () => this.onBagButton?.());
-    q(".tb-btn.menu").addEventListener("click", () => this.toggleHelp());
+    const menu = q(".tb-menu");
+    q(".tb-btn.menu").addEventListener("click", () => (menu.hidden = !menu.hidden));
+    menu.addEventListener("click", (e) => {
+      const t = e.target as HTMLElement;
+      const gfx = t.closest<HTMLElement>("[data-gfx]");
+      const sound = t.closest<HTMLElement>("[data-sound]");
+      if (gfx) this.onGraphics?.(gfx.dataset.gfx as GraphicsChoice);
+      else if (sound) this.onSound?.(sound.dataset.sound === "on");
+      else if (t.closest(".tm-help")) this.toggleHelp();
+    });
     // One delegated handler: slots are re-rendered whenever their contents change.
     this.hotbarEl.addEventListener("click", (e) => {
       const t = e.target as HTMLElement;
@@ -252,10 +273,12 @@ export class Hud {
     this.helpEl.classList.toggle("faded");
   }
 
-  setDebug(fps: number, x: number, y: number, z: number, walkSpeed: number) {
+  /** F3 line. `perf`: draw calls, triangles, and CPU ms per frame (game logic + submitting the render). */
+  setDebug(fps: number, x: number, y: number, z: number, walkSpeed: number, perf?: { calls: number; tris: number; cpuMs: number }) {
     if (this.debugEl.hidden) return;
     const biome = biomeAt(z);
-    this.debugEl.textContent = `FPS ${fps.toFixed(0)} · pos ${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)} · ${biome ? biome.name : "Hub"} · walk ${walkSpeed.toFixed(1)} u/s`;
+    const p = perf ? ` · ${perf.calls} draws · ${(perf.tris / 1000).toFixed(0)}k tris · cpu ${perf.cpuMs.toFixed(1)} ms` : "";
+    this.debugEl.textContent = `FPS ${fps.toFixed(0)} · pos ${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)} · ${biome ? biome.name : "Hub"} · walk ${walkSpeed.toFixed(1)} u/s${p}`;
   }
 
   setPlayers(rows: PlayerRow[]) {
@@ -279,6 +302,14 @@ export class Hud {
       head.classList.toggle("sorted", head.dataset.key === this.sortKey);
       head.textContent = (head.dataset.key === this.sortKey ? (this.sortDesc ? "▼ " : "▲ ") : "") + (head.dataset.key === "name" ? "People" : head.dataset.key === "moneyPerSec" ? "Money/s" : "Speed");
     }
+  }
+
+  /** Highlights the current settings in the ☰ menu; `quality` is what "Auto" resolved to. */
+  setSettings(s: Settings, quality: Quality) {
+    for (const b of this.root.querySelectorAll<HTMLElement>(".tb-menu [data-gfx]")) b.classList.toggle("on", b.dataset.gfx === s.graphics);
+    for (const b of this.root.querySelectorAll<HTMLElement>(".tb-menu [data-sound]")) b.classList.toggle("on", (b.dataset.sound === "on") === s.sound);
+    (this.root.querySelector(".tb-menu .tm-note") as HTMLElement).textContent =
+      s.graphics === "auto" ? `Auto is using ${quality === "high" ? "High" : "Low"} on this device.` : quality === "low" ? "Low: no shadows and a shorter view — smoother on slow devices." : "";
   }
 
   /** Banner + Claim button shown once after joining if there's pending offline income (null hides it). */

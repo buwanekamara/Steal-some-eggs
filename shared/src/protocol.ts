@@ -52,7 +52,7 @@ export const MSG = {
   Sell: "sell",
   /** client → server: fuse 3 pets of one species (at the Fuse Machine). payload: pet uids */
   Fuse: "fuse",
-  /** server → client: fuse result. payload: HatchedMsg */
+  /** server → client: fusion made an egg. payload: FusedMsg */
   Fused: "fused",
   /** client → server: buy from the Shop with Gems. payload: ShopBuyMsg */
   ShopBuy: "shopBuy",
@@ -122,10 +122,27 @@ export interface InvTool {
   qty: number;
 }
 
+/** A fused egg's pre-rolled result: hatching it gives exactly this weight and mutation. */
+export interface FusionResult {
+  weight: number;
+  /** "" = Normal. */
+  mutation: string;
+}
+
 export interface InvEgg {
   uid: string;
   defId: string;
   size: number;
+  /** Set on eggs from the Fusion Machine. */
+  fusion?: FusionResult;
+}
+
+export interface FusedMsg {
+  /** The new egg. */
+  uid: string;
+  defId: string;
+  /** Hotbar slot it went to (-1 = hotbar full, it's in the inventory). */
+  slot: number;
 }
 
 export interface InvPet {

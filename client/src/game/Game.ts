@@ -21,13 +21,14 @@ import {
   trailMult,
   walkSpeedFromStat,
   type CooldownMsg,
-  type HatchedMsg,
+  type FusedMsg,
   type CorrectMsg,
   type JoinOptions,
   type MoveMsg,
   type UseMsg,
 } from "@egg/shared";
 import type { ModelLibrary } from "../assets/ModelLibrary.ts";
+import { sfx } from "../audio/Sfx.ts";
 import { Avatar } from "../entities/Avatar.ts";
 import { RemotePlayer } from "../entities/RemotePlayer.ts";
 import { TrailRibbon } from "../entities/TrailRibbon.ts";
@@ -45,6 +46,7 @@ import { CameraRig } from "./CameraRig.ts";
 import { HeistController } from "./HeistController.ts";
 import { HubController } from "./HubController.ts";
 import { PenController } from "./PenController.ts";
+import { QUALITY, loadSettings, resolveQuality, saveSettings, type Settings } from "./Settings.ts";
 import { TrapPreview } from "./TrapPreview.ts";
 import { getProfileId } from "./identity.ts";
 import { Input } from "./Input.ts";
@@ -88,6 +90,8 @@ const AUTOTRAIN = import.meta.env.DEV && new URLSearchParams(location.search).ha
 export function serverUrl() {
   const fromQuery = new URLSearchParams(location.search).get("server");
   if (fromQuery) return fromQuery;
+  // Production: the game server serves this page, so it's the same origin. Dev: Vite on :5173, the server on :2567.
+  if (import.meta.env.PROD) return location.origin;
   const proto = location.protocol === "https:" ? "https:" : "http:";
   return `${proto}//${location.hostname}:2567`;
 }
@@ -175,6 +179,8 @@ export class Game {
       clearSlot: (slot) => this.room?.send(MSG.HotbarClear, slot),
     });
     this.hud.onBagButton = () => this.backpack.toggle();
+    this.hud.onGraphics = (graphics) => this.changeSettings({ ...this.settings, graphics });
+    this.hud.onSound = (sound) => this.changeSettings({ ...this.settings, sound });
     this.hud.onSlotClick = (slot) => this.hotbarSlotClicked(slot);
     this.hud.onSlotClear = (slot) => this.room?.send(MSG.HotbarClear, slot);
     this.hud.onOfflineClaim = () => this.room?.send(MSG.ClaimOffline);
@@ -195,8 +201,8 @@ export class Game {
       if (code === "KeyC") this.setSlowMode(!this.me.slowMode);
       if (code === "F3") this.hud.toggleDebug();
       if (code === "KeyH") this.hud.toggleHelp();
-      if (code === "Equal") this.room?.send(MSG.DevSpeed, "up");
-      if (code === "Minus") this.room?.send(MSG.DevSpeed, "reset");
+      if (code === "Equal" && import.meta.env.DEV) this.room?.send(MSG.DevSpeed, "up");
+      if (code === "Minus" && import.meta.env.DEV) this.room?.send(MSG.DevSpeed, "reset");
       if (code === "KeyG" && import.meta.env.DEV) this.pen.devGrow();
       if (code === "KeyJ" && import.meta.env.DEV) this.room?.send(MSG.DevEgg);
       if (code === "Tab") this.panel.toggle("pets");
@@ -217,7 +223,7 @@ export class Game {
       if (code === "KeyF") this.useEquipped();
     });
     addEventListener("resize", () => this.resize());
-    this.resize();
+    this.applySettings(); // also sizes the canvas
   }
 
   async connect(name: string) {
@@ -268,6 +274,7 @@ export class Game {
         };
         held();
         cb.listen(p, "equipped", held);
+        cb.listen(p, "selectedSlot", () => sfx.click(), false);
         cb.listen(p, "equippedModel", held);
         cb.onChange(p, () => {
           if (p.speedStat > lastSpeed && p.training) this.floatGain(p.speedStat - lastSpeed, "speed");
@@ -306,8 +313,12 @@ export class Game {
     this.heist.bind(room);
     this.pen.bind(room);
     this.hub.bind(room);
-    room.onMessage(MSG.Fused, (m: HatchedMsg) => this.reveal.show(m, "FUSED!"));
-    room.onMessage(MSG.Cooldown, (m: CooldownMsg) => this.hud.startCooldown(m.kind, m.sec));
+    // Fusion makes an egg (the toast says which slot it went to); it's revealed properly when it hatches.
+    room.onMessage(MSG.Fused, (_m: FusedMsg) => sfx.secured());
+    room.onMessage(MSG.Cooldown, (m: CooldownMsg) => {
+      this.hud.startCooldown(m.kind, m.sec);
+      if (m.kind === "bat") sfx.swing(); // the server accepted the swing
+    });
 
     const state = room.state as StateView;
     const timers = () => this.hud.setTimers(state.nightIn, state.potionIn, state.isNight, state.potionAvailable);
@@ -555,6 +566,7 @@ export class Game {
 
   private loop = (now?: number) => {
     requestAnimationFrame(this.loop);
+    const frameStart = performance.now();
     this.timer.update(now);
     // Cap long frames at 0.1 s: below ~10 FPS the game slows down rather than teleporting,
     // but slow devices down to 10 FPS still move at full speed (guardians run on the server clock).
@@ -597,7 +609,39 @@ export class Game {
     this.world.update(dt);
     this.rig.update(this.me.pos, dt);
     this.world.followShadows(this.me.pos);
-    this.hud.setDebug(this.fps, this.me.pos.x, this.me.pos.y, this.me.pos.z, walkSpeedFromStat(this.me.speedStat, this.me.slowMode, this.me.trailMult));
     this.renderer.render(this.world.scene, this.camera);
+    const info = this.renderer.info.render;
+    this.cpuMs += (performance.now() - frameStart - this.cpuMs) * 0.05;
+    this.hud.setDebug(this.fps, this.me.pos.x, this.me.pos.y, this.me.pos.z, walkSpeedFromStat(this.me.speedStat, this.me.slowMode, this.me.trailMult), {
+      calls: info.calls,
+      tris: info.triangles,
+      cpuMs: this.cpuMs,
+    });
   };
+
+  /** Smoothed CPU time per frame (ms), for the F3 line. */
+  private cpuMs = 0;
+
+  private settings: Settings = loadSettings();
+
+  private changeSettings(s: Settings) {
+    this.settings = s;
+    saveSettings(s);
+    this.applySettings();
+  }
+
+  /** Graphics quality (resolution, shadows, view distance, detail) and sound, from the ☰ menu. */
+  private applySettings() {
+    const quality = resolveQuality(this.settings, this.input.isTouch);
+    const q = QUALITY[quality];
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, q.pixelRatioMax));
+    this.resize();
+    this.world.sun.castShadow = q.shadows;
+    if (this.world.scene.fog instanceof THREE.Fog) this.world.scene.fog.far = q.fogFar;
+    this.heist.viewDistance = q.viewDistance;
+    this.pen.detailDistance = q.detailDistance;
+    this.pen.popupBudget = q.popupBudget;
+    sfx.muted = !this.settings.sound;
+    this.hud.setSettings(this.settings, quality);
+  }
 }

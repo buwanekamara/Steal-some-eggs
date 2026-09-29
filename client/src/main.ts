@@ -23,7 +23,7 @@ function showStartScreen() {
       <button class="play big-btn shop">Play</button>
       <div class="progress"><div class="bar"></div></div>
       <div class="err"></div>
-      <a class="viewer-link" href="?viewer">Open Model Viewer</a>
+      ${import.meta.env.DEV ? `<a class="viewer-link" href="?viewer">Open Model Viewer</a>` : ""}
     </div>`;
   const nameIn = ui.querySelector(".name") as HTMLInputElement;
   const playBtn = ui.querySelector(".play") as HTMLButtonElement;
@@ -43,7 +43,9 @@ function showStartScreen() {
       console.error(e);
       if (!ui.querySelector(".start")) showStartScreen();
       (ui.querySelector(".err") as HTMLElement).textContent =
-        `Could not connect to the game server at ${serverUrl()}. Is "npm run dev" running? (${(e as Error).message ?? e})`;
+        import.meta.env.DEV
+          ? `Could not connect to the game server at ${serverUrl()}. Is "npm run dev" running? (${(e as Error).message ?? e})`
+          : "Couldn't reach the game server. Please try again in a moment.";
       (ui.querySelector(".play") as HTMLButtonElement).disabled = false;
     }
   };

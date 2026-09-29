@@ -22,6 +22,11 @@ import {
   rollWeight,
   slotCost,
   type HatchedMsg,
+  type FusedMsg,
+  fusedEggId,
+  fusionFee,
+  rollFusionMutation,
+  rollFusionWeight,
   type InvPet,
   formatShort,
   newUid,
@@ -37,7 +42,7 @@ import { PenEggState, PenPetState, type PlayerState } from "../schema/GameState.
 export interface PenHooks {
   inventory(sessionId: string, msg: InventoryMsg): void;
   hatched(sessionId: string, msg: HatchedMsg): void;
-  fused(sessionId: string, msg: HatchedMsg): void;
+  fused(sessionId: string, msg: FusedMsg): void;
   notify(sessionId: string, text: string, kind?: "info" | "good" | "bad"): void;
   /** A valuable change happened: save now. */
   save(sessionId: string): void;
@@ -146,6 +151,7 @@ export class PenSystem {
       z: +dz.toFixed(2),
       plantedAt: now,
       readyAt: now + (HATCH[owned.defId].growSec * 1000) / (this.nightActive ? WORLD_EVENTS.nightGrowMult : 1),
+      ...(owned.fusion ? { fusion: owned.fusion } : {}),
     };
     profile.penEggs.push(egg);
     p.eggCount = profile.eggs.length;
@@ -245,8 +251,9 @@ export class PenSystem {
     const pet: OwnedPet = {
       uid: newUid("p"),
       species: def.id,
-      weight: rollWeight(def, egg.size, Math.random()),
-      mutation: rollMutation(Math.random())?.id ?? "",
+      // A fused egg was rolled when it was made; anything else rolls now.
+      weight: egg.fusion ? egg.fusion.weight : rollWeight(def, egg.size, Math.random()),
+      mutation: egg.fusion ? egg.fusion.mutation : (rollMutation(Math.random())?.id ?? ""),
       equipped: true, // takes over the egg's slot
       obtainedAt: this.now(),
     };
@@ -429,42 +436,52 @@ export class PenSystem {
     this.changed(sessionId);
   }
 
-  /** Fuse 3 pets of the same species at the Fuse Machine into one heavier pet — only pets in the inventory. The result is a new item. */
+  /**
+   * Fusion Machine: 3 pets of one species (in the inventory) + a fee → 1 egg of that species, with a freshly rolled
+   * weight and mutation that it hatches into. Everything is validated before anything changes, and the whole thing
+   * runs in one message handler (the server is single-threaded), so it either happens completely or not at all.
+   */
   fuse(sessionId: string, uids: unknown) {
     const o = this.owners.get(sessionId);
     if (!o) return;
     const { p, profile } = o;
     const spot = useSpot(HUB_BUILDINGS.fuse);
     if (!this.near(p, spot.x, spot.z)) return this.hooks.notify(sessionId, "Go to the Fuse Machine to fuse pets.", "bad");
+    // Exactly 3 distinct pets that are yours.
     const pets = this.ownPets(profile, uids, FUSE.inputs);
     if (!pets || pets.length !== FUSE.inputs) return this.hooks.notify(sessionId, `Pick ${FUSE.inputs} pets to fuse.`, "bad");
     for (const x of pets) {
       const why = whyNotInInventory(profile, x.uid);
       if (why) return this.hooks.notify(sessionId, why, "bad");
     }
-    if (!pets.every((x) => x.species === pets[0].species)) return this.hooks.notify(sessionId, "All three must be the same pet.", "bad");
+    const species = pets[0].species;
+    if (!pets.every((x) => x.species === species)) return this.hooks.notify(sessionId, "All three must be the same pet.", "bad");
+    const def = PET_BY_ID.get(species);
+    const eggDef = EGG_BY_ID.get(fusedEggId(species));
+    if (!def || !eggDef) return this.hooks.notify(sessionId, "Those pets can't be fused.", "bad");
+    const fee = fusionFee(species);
+    if (p.money < fee) return this.hooks.notify(sessionId, `You don't have enough money to fuse these pets ($${formatShort(fee)}).`, "bad");
+    // (The inventory has no size cap, so there's always room for the egg.)
 
-    // Mutations: each mutated input has a chance to pass its mutation on (best one wins).
-    let mutation = "";
-    for (const x of [...pets].sort((a, b) => (MUTATION_BY_ID.get(b.mutation)?.incomeMult ?? 1) - (MUTATION_BY_ID.get(a.mutation)?.incomeMult ?? 1))) {
-      if (x.mutation && Math.random() < FUSE.mutationKeepChance) {
-        mutation = x.mutation;
-        break;
-      }
-    }
+    // All checks passed: consume, charge, and make the egg.
     const gone = new Set(pets.map((x) => x.uid));
     profile.pets = profile.pets.filter((x) => !gone.has(x.uid));
-    const fused: OwnedPet = {
-      uid: newUid("p"),
-      species: pets[0].species,
-      weight: +(pets.reduce((a, x) => a + x.weight, 0) * FUSE.weightFactor).toFixed(1),
-      mutation,
-      equipped: false,
-      obtainedAt: this.now(),
-    };
-    profile.pets.push(fused);
-    stash(profile, fused.uid);
-    this.hooks.fused(sessionId, { pet: this.invPet(fused), isNew: false });
+    p.money -= fee;
+    const weight = rollFusionWeight(species, pets.map((x) => x.weight), Math.random());
+    const mutation = rollFusionMutation(pets.map((x) => x.mutation), Math.random());
+    // Egg size is only how big it looks: heavier results make bigger eggs.
+    const size = +Math.min(EGG_SIZE.max, Math.max(EGG_SIZE.min, weight / (def.baseWeight * 1.025))).toFixed(2);
+    const egg: OwnedEgg = { uid: newUid("e"), defId: eggDef.id, size, obtainedAt: this.now(), fusion: { weight, mutation } };
+    profile.eggs.push(egg);
+    p.eggCount = profile.eggs.length;
+    stash(profile, egg.uid);
+    const slot = profile.hotbar.indexOf(egg.uid);
+    this.hooks.notify(
+      sessionId,
+      slot >= 0 ? `Fusion complete! ${eggDef.name} added to hotbar slot ${(slot + 1) % 10}.` : `Fusion complete! Hotbar full — ${eggDef.name} added to your inventory.`,
+      "good",
+    );
+    this.hooks.fused(sessionId, { uid: egg.uid, defId: egg.defId, slot });
     this.changed(sessionId);
   }
 
@@ -506,7 +523,7 @@ export class PenSystem {
     cleanHotbar(profile);
     this.syncHeld(p, profile);
     this.hooks.inventory(sessionId, {
-      eggs: profile.eggs.filter((e) => EGG_BY_ID.has(e.defId)).map((e) => ({ uid: e.uid, defId: e.defId, size: e.size })),
+      eggs: profile.eggs.filter((e) => EGG_BY_ID.has(e.defId)).map((e) => ({ uid: e.uid, defId: e.defId, size: e.size, ...(e.fusion ? { fusion: e.fusion } : {}) })),
       pets: profile.pets.map((x) => this.invPet(x, profile)),
       slots: profile.penSlots,
       nextSlotCost: profile.penSlots >= PEN.maxSlots ? 0 : slotCost(profile.penSlots),

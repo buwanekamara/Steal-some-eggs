@@ -124,6 +124,11 @@ export class PetEntity {
     for (const [i, m] of this.rainbow.entries()) m.emissive.setHSL((this.time * 0.25 + i * 0.13) % 1, 0.9, 0.5);
   }
 
+  /** Name tags are only drawn up close (each one is its own draw call). */
+  showLabel(on: boolean) {
+    this.label.visible = on;
+  }
+
   dispose() {
     this.label.dispose();
     this.root.removeFromParent();

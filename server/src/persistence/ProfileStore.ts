@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEV, EGG_BY_ID, HATCH, HOTBAR_SIZE, MUTATION_BY_ID, newUid, PEN, PEN_LEVELS, PET_BY_ID, STARTER_TOOLS, TOOLS, TRAIL_BY_ID, type ToolKind } from "@egg/shared";
+import { DEV, EGG_BY_ID, HATCH, HOTBAR_SIZE, MUTATION_BY_ID, newUid, PEN, PEN_LEVELS, PET_BY_ID, STARTER_TOOLS, TOOLS, TRAIL_BY_ID, type FusionResult, type ToolKind } from "@egg/shared";
 import { cleanHotbar, grantTool, stash } from "../systems/Inventory.ts";
 
 /** A bat, or a stack of bear traps. */
@@ -18,6 +18,8 @@ export interface OwnedEgg {
   defId: string;
   size: number;
   obtainedAt: number;
+  /** Eggs from the Fusion Machine hatch into exactly this. */
+  fusion?: FusionResult;
 }
 
 /** An egg growing in the pen. Growth uses wall-clock time, so it keeps growing while offline. */
@@ -29,6 +31,7 @@ export interface PenEgg {
   z: number;
   plantedAt: number;
   readyAt: number;
+  fusion?: FusionResult;
 }
 
 export interface OwnedPet {
@@ -118,6 +121,13 @@ function blankProfile(name: string): Profile {
   };
 }
 
+/** A saved fusion result, if it is a sane one. */
+function fusionOf(raw: unknown): { fusion?: FusionResult } {
+  const f = raw as Partial<FusionResult> | undefined;
+  if (!f || !(typeof f.weight === "number" && f.weight > 0)) return {};
+  return { fusion: { weight: f.weight, mutation: typeof f.mutation === "string" && MUTATION_BY_ID.has(f.mutation) ? f.mutation : "" } };
+}
+
 function migrateTools(raw: unknown): OwnedTool[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
@@ -141,7 +151,7 @@ function migrate(raw: Partial<Profile>, name: string): Profile {
     eggs: Array.isArray(raw.eggs)
       ? raw.eggs
           .filter((e) => e && typeof e.defId === "string" && EGG_BY_ID.has(e.defId))
-          .map((e) => ({ uid: typeof e.uid === "string" && e.uid ? e.uid : newUid("e"), defId: e.defId, size: num(e.size, 1), obtainedAt: num(e.obtainedAt, 0) }))
+          .map((e) => ({ uid: typeof e.uid === "string" && e.uid ? e.uid : newUid("e"), defId: e.defId, size: num(e.size, 1), obtainedAt: num(e.obtainedAt, 0), ...fusionOf(e.fusion) }))
       : [],
     penEggs: Array.isArray(raw.penEggs)
       ? raw.penEggs
@@ -154,6 +164,7 @@ function migrate(raw: Partial<Profile>, name: string): Profile {
             z: typeof e.z === "number" ? e.z : 0,
             plantedAt: num(e.plantedAt, 0),
             readyAt: num(e.readyAt, 0),
+            ...fusionOf(e.fusion),
           }))
       : [],
     pets: Array.isArray(raw.pets)
@@ -218,7 +229,8 @@ export class JsonFileProfileStore implements ProfileStore {
   private dir: string;
   private writing = new Map<string, Promise<void>>();
 
-  constructor(dir = fileURLToPath(new URL("../../data/profiles", import.meta.url))) {
+  /** DATA_DIR moves saves elsewhere (e.g. a host's persistent disk); by default they go in server/data/profiles. */
+  constructor(dir = process.env.DATA_DIR ? path.join(process.env.DATA_DIR, "profiles") : fileURLToPath(new URL("../../data/profiles", import.meta.url))) {
     this.dir = dir;
   }
 

@@ -67,13 +67,12 @@ export class World {
     this.arrow = this.buildArrow();
   }
 
+  /** All nests share one instanced model (they never move): a handful of draw calls instead of hundreds. */
   private buildNests() {
-    for (const n of NESTS) {
-      const nest = this.lib.instance("nest");
-      nest.position.set(n.x, 0, n.z);
-      nest.rotation.y = n.index * 1.7;
-      this.scene.add(nest);
-    }
+    const placements = NESTS.map((n) =>
+      new THREE.Matrix4().compose(new THREE.Vector3(n.x, 0, n.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), n.index * 1.7), new THREE.Vector3(1, 1, 1)),
+    );
+    this.scene.add(this.lib.instanceMany("nest", placements));
   }
 
   /** Blocky trees along the Forest walls and a few bushes (instanced: cheap to draw). */

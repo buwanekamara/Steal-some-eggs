@@ -95,6 +95,29 @@ class SfxPlayer {
   deny() {
     this.tone(200, 0.12, "square", 0.05);
   }
+
+  /** Bat swing: a quick airy whoosh. */
+  swing() {
+    this.noise(0.18, 0.35, 1800);
+    this.tone(420, 0.12, "sine", 0.05, 0, 180);
+  }
+
+  /** Bear trap set down: a metallic clunk. */
+  trapSet() {
+    this.tone(180, 0.1, "square", 0.08, 0, 90);
+    this.tone(1400, 0.06, "triangle", 0.04, 0.02);
+  }
+
+  /** Good news (sold, chest, fusion, a trap caught someone…): a soft two-note chime. */
+  good() {
+    this.tone(880, 0.1, "triangle", 0.05);
+    this.tone(1320, 0.14, "triangle", 0.05, 0.08);
+  }
+
+  /** Hotbar selection tick. */
+  click() {
+    this.tone(1200, 0.04, "square", 0.025);
+  }
 }
 
 export const sfx = new SfxPlayer();

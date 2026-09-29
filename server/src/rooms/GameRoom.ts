@@ -65,6 +65,7 @@ interface PlayerMeta {
 const DEV_CHEATS = process.env.NODE_ENV !== "production";
 
 const TICK_MS = 50;
+const PERF_EVERY_SEC = 10;
 /** A player whose last move message is older than this counts as idle. */
 const INPUT_STALE_MS = 250;
 const SERVER_START = Date.now();
@@ -180,6 +181,7 @@ export class GameRoom extends Room<{ state: GameState }> {
 
     this.setSimulationInterval((dtMs) => this.tick(dtMs / 1000), TICK_MS);
     this.clock.setInterval(() => this.saveAll(), SAVE.autosaveSec * 1000);
+    if (process.env.PERF) this.clock.setInterval(() => this.reportPerf(), PERF_EVERY_SEC * 1000);
     this.updateWorldTimers();
   }
 
@@ -249,6 +251,7 @@ export class GameRoom extends Room<{ state: GameState }> {
   // ------------------------------------------------------------------ simulation
 
   private tick(dt: number) {
+    const t0 = performance.now();
     this.state.players.forEach((p, sessionId) => {
       const m = this.meta.get(sessionId);
       if (!m) return;
@@ -257,6 +260,22 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.heist.tick(dt);
     this.tickTraps();
     this.updateWorldTimers();
+    const ms = performance.now() - t0;
+    this.perf.ticks++;
+    this.perf.tickMs += ms;
+    this.perf.maxMs = Math.max(this.perf.maxMs, ms);
+  }
+
+  /** Simulation cost and traffic, reported every PERF_EVERY_SEC when the server runs with PERF=1 (load testing). */
+  private perf = { ticks: 0, tickMs: 0, maxMs: 0, moves: 0 };
+
+  private reportPerf() {
+    const { ticks, tickMs, maxMs, moves } = this.perf;
+    const heap = process.memoryUsage().heapUsed / 1024 / 1024;
+    console.log(
+      `[perf room ${this.roomId}] ${this.state.players.size} players · tick avg ${(tickMs / Math.max(1, ticks)).toFixed(2)} ms, max ${maxMs.toFixed(2)} ms (budget ${TICK_MS} ms) · ${(moves / PERF_EVERY_SEC).toFixed(0)} moves/s · heap ${heap.toFixed(0)} MB`,
+    );
+    this.perf = { ticks: 0, tickMs: 0, maxMs: 0, moves: 0 };
   }
 
   private sessionOf(p: PlayerState) {
@@ -584,6 +603,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     const now = Date.now();
     const dt = Math.min(1, (now - m.lastMoveAt) / 1000);
     m.lastMoveAt = now;
+    this.perf.moves++;
 
     // Knockback flings players faster than they can walk; allow it for the stun window (+ landing time).
     const knocked = now < m.knockUntil + 500;

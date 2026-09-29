@@ -139,7 +139,10 @@ export class Backpack {
     if (this.tab === "eggs") {
       return inv.eggs.filter((e) => free(e.uid)).map((e) => {
         const def = EGG_BY_ID.get(e.defId)!;
-        return { uid: e.uid, icon: "🥚", name: def.name, sub: `size ${e.size.toFixed(2)}`, color: RARITY_COLOR[def.rarity] };
+        // A fused egg already knows what it hatches into.
+        const mut = e.fusion?.mutation ? MUTATION_BY_ID.get(e.fusion.mutation)?.prefix : "";
+        const sub = e.fusion ? `${e.fusion.weight}Kg${mut ? ` ${mut}` : ""}` : `size ${e.size.toFixed(2)}`;
+        return { uid: e.uid, icon: "🥚", name: def.name, sub, color: RARITY_COLOR[def.rarity] };
       });
     }
     return inv.tools.filter((t) => free(t.uid)).map((t) => {

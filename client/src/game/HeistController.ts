@@ -131,6 +131,7 @@ export class HeistController {
       this.ctx.scene.add(obj);
       this.traps.set(key as string, obj);
       this.trapViews.set(key as string, view);
+      if (view.ownerId === room.sessionId) sfx.trapSet();
     });
     cb.onRemove("traps", (_value, key) => {
       this.traps.get(key as string)?.removeFromParent();
@@ -158,12 +159,17 @@ export class HeistController {
     });
     room.onMessage(MSG.Notify, (m: NotifyMsg) => {
       if (m.kind === "bad") sfx.deny();
+      else if (m.kind === "good") sfx.good();
       this.ctx.heistHud.toast(m.text, m.kind);
     });
   }
 
+  /** Eggs and guardians farther than this from you aren't drawn or animated (graphics setting). */
+  viewDistance = Infinity;
+
   update(dt: number) {
     const { me, heistHud } = this.ctx;
+    const far = (x: number, z: number) => Math.hypot(x - me.pos.x, z - me.pos.z) > this.viewDistance;
 
     for (const { entity, view } of this.eggs.values()) {
       let slot: THREE.Object3D | undefined;
@@ -174,9 +180,14 @@ export class HeistController {
         entity.attach(this.ctx.scene);
         entity.root.position.copy(entity.target);
       }
-      entity.update(dt, !!slot);
+      // Carried eggs follow their carrier's visibility; the rest are culled by distance.
+      entity.root.visible = !!slot || !far(view.x, view.z);
+      if (entity.root.visible) entity.update(dt, !!slot);
     }
-    for (const { entity } of this.guardians.values()) entity.update(dt);
+    for (const { entity, view } of this.guardians.values()) {
+      entity.root.visible = !far(view.x, view.z);
+      if (entity.root.visible) entity.update(dt);
+    }
 
     this.updateCarrying();
     this.updatePrompt();

@@ -129,6 +129,29 @@ export class ModelLibrary {
     return outer;
   }
 
+  /**
+   * One static model drawn at many places, as a few InstancedMeshes (one draw call per part instead of one per
+   * part per copy). For props that never move or animate individually (nests…); skinned parts aren't supported.
+   */
+  instanceMany(id: string, placements: THREE.Matrix4[]): THREE.Group {
+    const group = new THREE.Group();
+    group.name = `instanced:${id}`;
+    if (!placements.length) return group;
+    const template = this.instance(id);
+    template.updateMatrixWorld(true);
+    template.traverse((o) => {
+      const part = o as THREE.Mesh;
+      if (!part.isMesh || (part as THREE.SkinnedMesh).isSkinnedMesh) return;
+      const mesh = new THREE.InstancedMesh(part.geometry, part.material, placements.length);
+      placements.forEach((p, i) => mesh.setMatrixAt(i, new THREE.Matrix4().multiplyMatrices(p, part.matrixWorld)));
+      mesh.castShadow = part.castShadow;
+      mesh.receiveShadow = part.receiveShadow;
+      mesh.computeBoundingSphere();
+      group.add(mesh);
+    });
+    return group;
+  }
+
   // ------------------------------------------------------------------ loading
 
   private makeManager(): { manager: THREE.LoadingManager; idle: Promise<void>; failed: string[] } {

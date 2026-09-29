@@ -2,6 +2,7 @@
  * Test bots.
  *   npm run bots            → 3 bots jogging in front of their bases
  *   npm run bots -- 6       → 6 bots
+ *   npm run bots -- 28 load → load test: 28 bots (4 rooms) jogging + using items for LOAD_SEC (60) seconds
  *   npm run bots -- 2 check → automated multiplayer / treadmill / save / heist / pen / upgrade & shop checks, then exit (PASS/FAIL)
  * Set BOT_BASE=<0-7> to make all bots jog in front of that base instead of their own.
  */
@@ -22,6 +23,9 @@ import {
   PVP,
   SELL_MULT,
   eggSellValue,
+  FUSE,
+  fusedEggId,
+  fusionFee,
   TRAP,
   useSpot,
   GuardianMode,
@@ -34,6 +38,7 @@ import {
   slotCost,
   walkSpeedFromStat,
   type CooldownMsg,
+  type FusedMsg,
   type CorrectMsg,
   type JoinOptions,
   type HatchedMsg,
@@ -46,6 +51,7 @@ import {
 
 const count = Math.max(2, Number(process.argv[2] ?? 3));
 const check = process.argv.includes("check");
+const load = process.argv.includes("load");
 const url = process.env.SERVER ?? "http://localhost:2567";
 
 interface PlayerLike {
@@ -106,7 +112,7 @@ interface Bot {
   notes: NotifyMsg[];
   inventory?: InventoryMsg;
   hatched: HatchedMsg[];
-  fused: HatchedMsg[];
+  fused: FusedMsg[];
   cooldowns: CooldownMsg[];
   leaveCode?: number;
   onCorrect?: (m: CorrectMsg) => void;
@@ -121,7 +127,7 @@ async function join(name: string, profileId: string, roomId?: string): Promise<B
   room.onMessage(MSG.Inventory, (m: InventoryMsg) => (bot.inventory = m));
   room.onMessage(MSG.Cooldown, (m: CooldownMsg) => bot.cooldowns.push(m));
   room.onMessage(MSG.Hatched, (m: HatchedMsg) => bot.hatched.push(m));
-  room.onMessage(MSG.Fused, (m: HatchedMsg) => bot.fused.push(m));
+  room.onMessage(MSG.Fused, (m: FusedMsg) => bot.fused.push(m));
   room.send(MSG.Inventory);
   room.onMessage(MSG.Knock, (m: KnockMsg) => bot.knocks.push(m));
   room.onMessage(MSG.Secured, (m: SecuredMsg) => bot.secured.push(m));
@@ -348,37 +354,80 @@ async function progressChecks(bot: Bot, results: [string, boolean][]) {
     return bot.notes[n]?.text ?? "";
   };
 
-  // Fuse: 3 Chicks -> 1 heavier Chick. New pets land on the hotbar, so first they have to come off it.
+  // Fusion Machine: 3 Chicks → 1 Chick Egg for a fee. New pets land on the hotbar, so first they come off it.
   const petsBefore = inv().pets.length;
   for (let i = 0; i < 3; i++) room.send(MSG.DevPet, "forest_chick");
-  await until(() => inv().pets.length === petsBefore + 3, 1500);
+  room.send(MSG.DevPet, "forest_bunny"); // for the mixed-species check, and to sell afterwards
+  await until(() => inv().pets.length === petsBefore + 4, 1500);
   const chicks = inv().pets.filter((x) => x.species === "forest_chick" && !x.equipped).slice(-3);
+  const bunny = inv().pets.filter((x) => x.species === "forest_bunny" && !x.equipped).slice(-1)[0];
   const fuse = useSpot(HUB_BUILDINGS.fuse);
   await walkTo(bot, fuse.x, 0, fuse.z);
   const onBar = await refused(MSG.Fuse, chicks.map((x) => x.uid));
-  results.push([`fusing pets that are on the hotbar refused ("${onBar}")`, bot.fused.length === 0 && inv().pets.length === petsBefore + 3]);
-  for (const c of chicks) await toInventory(c.uid);
-  room.send(MSG.Fuse, chicks.map((x) => x.uid));
-  await until(() => bot.fused.length === 1, 1500);
-  const fused = bot.fused[0]?.pet;
-  const expected = +(chicks.reduce((a, x) => a + x.weight, 0) * 0.8).toFixed(1);
-  results.push([`fuse 3 Chicks from the inventory -> 1 Chick of ${fused?.weight}kg (pets ${petsBefore + 3} -> ${inv().pets.length})`, !!fused && fused.weight === expected && inv().pets.length === petsBefore + 1]);
+  results.push([`fusing pets that are on the hotbar refused ("${onBar}")`, bot.fused.length === 0 && inv().pets.length === petsBefore + 4]);
+  for (const c of [...chicks, bunny]) await toInventory(c.uid);
+  const mixed = await refused(MSG.Fuse, [chicks[0].uid, chicks[1].uid, bunny.uid]);
+  results.push([`fusing different species refused ("${mixed}")`, bot.fused.length === 0 && inv().pets.length === petsBefore + 4]);
 
-  // Sell: a pet in the pen, and the fused chick while it's on the hotbar, are refused; from the inventory it sells.
+  const fee = fusionFee("forest_chick");
+  const eggsBeforeFuse = inv().eggs.length;
+  const mFuse = P().money;
+  room.send(MSG.Fuse, chicks.map((x) => x.uid));
+  // The Fused message and inventory arrive right away; the money change comes with the next state patch.
+  await until(() => bot.fused.length === 1 && inv().eggs.length === eggsBeforeFuse + 1 && P().money < mFuse, 1500);
+  const out = bot.fused[0];
+  const fusedEgg = inv().eggs.find((e) => e.uid === out?.uid);
+  const avg = chicks.reduce((a, x) => a + x.weight, 0) / 3;
+  const paid = mFuse - P().money; // pen income ticking meanwhile can only make this look a bit smaller
+  const rolled = fusedEgg?.fusion?.weight ?? 0;
+  results.push([
+    `fuse 3 Chicks -> 1 Chick Egg in hotbar slot ${(out?.slot ?? 0) + 1} (rolled ${rolled}Kg from avg ${avg.toFixed(1)}, paid $${Math.round(paid)} of $${fee})`,
+    !!fusedEgg &&
+      fusedEgg.defId === fusedEggId("forest_chick") &&
+      inv().pets.length === petsBefore + 1 &&
+      rolled >= +(avg * FUSE.weightRoll.min).toFixed(1) - 0.1 &&
+      rolled <= +(avg * FUSE.weightRoll.max).toFixed(1) + 0.1 &&
+      paid <= fee &&
+      paid >= fee - P().income * 3 - 1 &&
+      inv().hotbar[out.slot] === fusedEgg.uid,
+  ]);
+
+  // The fused egg is an ordinary egg: hold it, place it in the pen, grow, hatch — into exactly its rolled result.
+  const plotF = basePlot(P().baseIndex);
+  await walkTo(bot, plotF.cx, 0, plotF.cz);
+  await holdSlot(bot, out.slot);
+  room.send(MSG.Use, {});
+  await until(() => P().penEggs.size === 1, 1500);
+  const [fusedPenUid] = [...P().penEggs.keys()];
+  room.send(MSG.DevGrow);
+  await until(() => P().penEggs.get(fusedPenUid)?.readyIn === 0, 1500);
+  const hatchedBefore = bot.hatched.length;
+  room.send(MSG.Hatch, fusedPenUid);
+  await until(() => bot.hatched.length > hatchedBefore, 1500);
+  const born = bot.hatched[bot.hatched.length - 1]?.pet;
+  results.push([
+    `the Chick Egg hatches into exactly its rolled result (${born?.species} ${born?.weight}Kg${born?.mutation ? ` ${born.mutation}` : ""})`,
+    born?.species === "forest_chick" && born.weight === fusedEgg?.fusion?.weight && born.mutation === fusedEgg?.fusion?.mutation,
+  ]);
+
+  // Sell: a pet in the pen, and the bunny while it's on the hotbar, are refused; from the inventory it sells.
   const sell = useSpot(HUB_BUILDINGS.sell);
   await walkTo(bot, sell.x, 0, sell.z);
   const penPet = inv().pets.find((x) => x.equipped)!;
   const inPen = await refused(MSG.Sell, [penPet.uid]);
   results.push([`selling a pet that's in the pen refused ("${inPen}")`, inv().pets.some((x) => x.uid === penPet.uid)]);
-  await until(() => inv().hotbar.includes(fused.uid), 1000);
-  const fusedOnBar = await refused(MSG.Sell, [fused.uid]);
-  results.push([`selling a pet that's on the hotbar refused ("${fusedOnBar}")`, inv().pets.some((x) => x.uid === fused.uid)]);
-  await toInventory(fused.uid);
+  room.send(MSG.HotbarSet, { uid: bunny.uid });
+  await until(() => inv().hotbar.includes(bunny.uid), 1000);
+  const bunnyOnBar = await refused(MSG.Sell, [bunny.uid]);
+  results.push([`selling a pet that's on the hotbar refused ("${bunnyOnBar}")`, inv().pets.some((x) => x.uid === bunny.uid)]);
+  await toInventory(bunny.uid);
+  const petsBeforeSale = inv().pets.length;
   const m2 = P().money;
-  room.send(MSG.Sell, [fused.uid]);
-  await until(() => inv().pets.length === petsBefore && P().money > m2, 1500); // message + state patch
+  room.send(MSG.Sell, [bunny.uid]);
+  // Wait for the sale itself to land in the state (a pen-income tick alone would also raise money a little).
+  await until(() => inv().pets.length === petsBeforeSale - 1 && P().money >= m2 + bunny.income * SELL_MULT, 1500);
   const got = P().money - m2;
-  results.push([`sell it from the inventory for $${Math.round(got)} (= $/s × ${SELL_MULT})`, inv().pets.length === petsBefore && got >= fused.income * SELL_MULT]);
+  results.push([`sell it from the inventory for $${Math.round(got)} (= $/s × ${SELL_MULT})`, !inv().pets.some((x) => x.uid === bunny.uid) && got >= bunny.income * SELL_MULT]);
 
   // Shop with Gems. (Baseline off whatever we're holding — the chest above may have thrown in a random Gems bonus.)
   const gems0 = inv().gems;
@@ -542,6 +591,7 @@ async function pvpChecks(a: Bot, b: Bot, results: [string, boolean][]) {
 
   // B holds its bat (from the starter kit, in slot 1).
   await holdSlot(b, toolSlot(b, "bat"));
+  await until(() => players(roomA).get(roomB.sessionId)?.equipped === "bat", 1000); // A's copy of B syncs a patch later
   results.push([`hold the bat (key 1): it's in B's hand for everyone`, me(roomB).equipped === "bat" && players(roomA).get(roomB.sessionId)?.equipped === "bat"]);
 
   // B faces A exactly (a Move message can set ry without needing to walk) and swings.
@@ -729,6 +779,8 @@ async function runBots() {
   if (check) return runChecks();
 
   const bots = await Promise.all(Array.from({ length: count }, (_, i) => join(`Bot${i + 1}`, `botjogger-${i + 1}`)));
+  // With many joining at once, the first state sync can land a moment after the join itself.
+  for (const { room } of bots) await until(() => !!(room.state as { players?: Map<string, PlayerLike> }).players?.get(room.sessionId), 10_000);
   console.log(`[bots] ${bots.length} bots joined`);
 
   // Each bot walks (at a legal speed) toward a point circling in front of a base.
@@ -755,7 +807,30 @@ async function runBots() {
       room.send(MSG.Move, msg);
     }
   }, dt * 1000);
-  console.log("[bots] jogging… Ctrl+C to stop");
+  if (!load) return console.log("[bots] jogging… Ctrl+C to stop");
+
+  // Load test: on top of jogging, every bot now and then picks a hotbar slot and presses Use, like a busy player.
+  const patches = bots.map(() => 0);
+  bots.forEach((bot, i) => bot.room.onStateChange(() => patches[i]++));
+  let disconnects = 0;
+  bots.forEach((bot) => bot.room.onLeave(() => disconnects++));
+  const actions = setInterval(() => {
+    for (const bot of bots) {
+      if (Math.random() > 0.3) continue;
+      bot.room.send(MSG.SelectSlot, Math.floor(Math.random() * 3));
+      bot.room.send(MSG.Use, {});
+    }
+  }, 1000);
+  const secs = Number(process.env.LOAD_SEC ?? 60);
+  console.log(`[bots] load test: ${bots.length} bots in ${new Set(bots.map((b) => b.room.roomId)).size} rooms for ${secs}s (run the server with PERF=1 to see tick times)…`);
+  await sleep(secs * 1000);
+  clearInterval(actions);
+  const rate = patches.map((n) => n / secs);
+  console.log(
+    `[bots] done: ${bots.length - disconnects}/${bots.length} still connected · state patches per bot ${Math.min(...rate).toFixed(1)}–${Math.max(...rate).toFixed(1)}/s (avg ${(rate.reduce((a, b) => a + b, 0) / rate.length).toFixed(1)})`,
+  );
+  for (const bot of bots) if (bot.room.connection.isOpen) await bot.room.leave();
+  process.exit(disconnects ? 1 : 0);
 }
 
 async function runChecks() {

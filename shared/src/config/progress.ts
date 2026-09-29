@@ -2,7 +2,8 @@
 
 import type { Rarity } from "./eggs.ts";
 import type { ToolKind } from "./items.ts";
-import { HATCH, PET_BY_ID, petIncome } from "./pets.ts";
+import { HATCH, MUTATIONS, PET_BY_ID, petIncome } from "./pets.ts";
+import { BIOMES } from "./world.ts";
 
 // ---------------------------------------------------------------- pen levels (fence tiers)
 
@@ -79,14 +80,57 @@ export function eggSellValue(eggDefId: string, size: number): number {
   return Math.max(1, Math.round(avgIncome * EGG_SELL_MULT));
 }
 
+/**
+ * Fusion Machine: 3 pets of one species (from the inventory) + a fee → 1 egg of that species, which hatches
+ * normally. It's a reroll, not a guaranteed upgrade: weight and mutation are rolled fresh, only the species is kept.
+ */
 export const FUSE = {
   /** How many pets of the same species go in. */
   inputs: 3,
-  /** Result weight = sum of input weights × this (a bit less than keeping all three, but one slot instead of three). */
-  weightFactor: 0.8,
-  /** Chance per mutated input that the result keeps that mutation ("better pets give more luck"). */
-  mutationKeepChance: 0.35,
+  /** Output weight = average input weight × a random factor in this range. */
+  weightRoll: { min: 0.75, max: 1.35 },
+  /** Allowed output weight for a species, as multiples of its base weight. */
+  weightLimits: { min: 0.5, max: 100 },
+  /** Fresh mutation roll for the output (the rest is Normal). */
+  mutationChances: { golden: 0.04, rainbow: 0.004 } as Record<string, number>,
+  /** Added once to a mutation's chance when all three inputs have it — the only way inputs sway the roll. */
+  sameMutationBonus: 0.02,
+  /** Fee by species id; species not listed fall back to their rarity (× biome), then to `defaultFee`. */
+  feeBySpecies: { forest_chick: 1_000, forest_fox: 2_500, forest_bear: 5_000 } as Record<string, number>,
+  feeByRarity: { Common: 1_000, Uncommon: 2_500, Rare: 5_000, Epic: 15_000, Legendary: 50_000, Mythic: 250_000, Secret: 1_000_000 } as Record<string, number>,
+  /** Rarity fees grow this much per biome down the corridor. */
+  biomeFeeMult: 1.6,
+  defaultFee: 1_000,
 } as const;
+
+/** The fee to fuse three pets of this species (recomputed by the server when you confirm). */
+export function fusionFee(species: string): number {
+  const pet = PET_BY_ID.get(species);
+  if (FUSE.feeBySpecies[species] !== undefined) return FUSE.feeBySpecies[species];
+  const base = pet ? FUSE.feeByRarity[pet.rarity] : undefined;
+  if (base === undefined || !pet) return FUSE.defaultFee;
+  const tier = Math.max(0, BIOMES.findIndex((b) => b.id === pet.biome));
+  return Math.round(base * FUSE.biomeFeeMult ** tier);
+}
+
+/** Output weight: the inputs' average × a random factor, kept within the species' limits. */
+export function rollFusionWeight(species: string, inputWeights: number[], rnd: number): number {
+  const pet = PET_BY_ID.get(species)!;
+  const avg = inputWeights.reduce((a, w) => a + w, 0) / inputWeights.length;
+  const w = avg * (FUSE.weightRoll.min + rnd * (FUSE.weightRoll.max - FUSE.weightRoll.min));
+  return +Math.min(pet.baseWeight * FUSE.weightLimits.max, Math.max(pet.baseWeight * FUSE.weightLimits.min, w)).toFixed(1);
+}
+
+/** Output mutation: a fresh roll, rarest first; all three inputs sharing a mutation adds `sameMutationBonus` to it once. */
+export function rollFusionMutation(inputMutations: string[], rnd: number): string {
+  const shared = inputMutations[0] && inputMutations.every((m) => m === inputMutations[0]) ? inputMutations[0] : "";
+  let acc = 0;
+  for (const m of MUTATIONS) {
+    acc += (FUSE.mutationChances[m.id] ?? 0) + (m.id === shared ? FUSE.sameMutationBonus : 0);
+    if (rnd < acc) return m.id;
+  }
+  return "";
+}
 
 // ---------------------------------------------------------------- Pet Index
 

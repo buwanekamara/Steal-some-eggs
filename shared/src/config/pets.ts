@@ -1,6 +1,6 @@
 // Pets, hatching, mutations, pen capacity and income. All balance numbers live here.
 
-import type { Rarity } from "./eggs.ts";
+import { EGGS, EGG_BY_ID, type Rarity } from "./eggs.ts";
 
 export interface PetDef {
   id: string;
@@ -380,4 +380,22 @@ export function petScale(pet: PetDef, weight: number): number {
 export function petDisplayName(pet: PetDef, mutation: string): string {
   const m = mutation ? MUTATION_BY_ID.get(mutation) : undefined;
   return m ? `${m.prefix} ${pet.name}` : pet.name;
+}
+
+// ---------------------------------------------------------------- species eggs (Fusion Machine output)
+
+/** Id of the egg that hatches only this species (made by fusing three of it). */
+export function fusedEggId(species: string): string {
+  return `fused_${species}`;
+}
+
+/**
+ * One egg per species. They are registered for every egg lookup (EGG_BY_ID, HATCH) but deliberately left out
+ * of EGGS, so they never spawn in nests. They grow like the slowest egg of their biome.
+ */
+for (const pet of PETS) {
+  const id = fusedEggId(pet.id);
+  const biomeEggs = EGGS.filter((e) => e.biome === pet.biome);
+  EGG_BY_ID.set(id, { id, name: `${pet.name} Egg`, biome: pet.biome, rarity: pet.rarity, weight: 0, colors: pet.colors });
+  HATCH[id] = { growSec: Math.max(30, ...biomeEggs.map((e) => HATCH[e.id]?.growSec ?? 30)), pets: [[pet.id, 1]] };
 }

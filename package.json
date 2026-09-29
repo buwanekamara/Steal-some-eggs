@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "dev": "concurrently -k -n server,client -c yellow,cyan \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w client",
+    "start": "npm run start -w server",
     "typecheck": "tsc -p shared && tsc -p server && tsc -p client",
     "bots": "npm run bots -w server --",
     "test:net": "npm run bots -w server -- 2 check"

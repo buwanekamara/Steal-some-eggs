@@ -978,6 +978,48 @@ body {
 .tb-btn:hover {
   background: rgba(60, 60, 70, 0.9);
 }
+.tb-menu {
+  position: absolute;
+  top: 66px;
+  left: 14px;
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tb-menu[hidden] {
+  display: none;
+}
+.tm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font: 700 15px var(--font);
+}
+.tm-opts {
+  display: flex;
+  gap: 4px;
+}
+.tm-opts button,
+.tm-help {
+  font: 700 13px var(--font);
+  color: #fff;
+  background: #ffffff1a;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.tm-opts button.on {
+  border-color: #ffd21f;
+  background: #ffd21f33;
+}
+.tm-note {
+  font-size: 12px;
+  opacity: 0.8;
+  min-height: 1em;
+}
 
 /* ------------------------------------------------ backpack: "All Items" grid, drag items onto the hotbar */
 .bp {
