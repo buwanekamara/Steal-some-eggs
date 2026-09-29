@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { Anim, groundHeightAt } from "@egg/shared";
+import { Anim, EGG_BY_ID, eggModelId, groundHeightAt } from "@egg/shared";
 import type { ModelLibrary } from "../assets/ModelLibrary.ts";
 import { TextLabel } from "../ui/labels.ts";
 
@@ -196,6 +196,10 @@ export class Avatar {
   readonly root = new THREE.Group();
   /** Carried egg attaches here (above and slightly behind the head). */
   readonly carrySlot = new THREE.Group();
+  /** Equipped bat/trap attaches here (down by the right hand). */
+  readonly handSlot = new THREE.Group();
+  private held: THREE.Object3D | null = null;
+  private heldTool = "";
   private label: TextLabel;
   private rig: { update(dt: number, anim: Anim, speed: number, ragdoll?: RagdollInput): void; kick?(strength: number): void } | null;
   /** Pivot at the hips, so the knockback tumble spins around the body's middle. */
@@ -213,7 +217,11 @@ export class Avatar {
     spin: new THREE.Vector3(),
   };
 
-  constructor(lib: ModelLibrary, name: string, tintIndex: number) {
+  constructor(
+    private lib: ModelLibrary,
+    name: string,
+    tintIndex: number,
+  ) {
     const model = lib.instance("player", { tint: PLAYER_TINTS[tintIndex % PLAYER_TINTS.length] });
     this.tumble.position.y = 1;
     model.position.y = -1;
@@ -221,6 +229,9 @@ export class Avatar {
     this.root.add(this.tumble);
     this.carrySlot.position.set(0, 1.15, -0.25); // 2.15 above the feet (tumble pivot is at y = 1)
     this.tumble.add(this.carrySlot);
+    this.handSlot.position.set(-0.65, 0.2, 0.2); // by the right hand, held down at the side
+    this.handSlot.rotation.set(2.5, 0, -0.3); // barrel/jaws point down and slightly forward
+    this.tumble.add(this.handSlot);
     const character = model.getObjectByName("model")!.children[0];
     this.rig = ClipRig.tryCreate(character) ?? new ProceduralRig(character);
 
@@ -231,6 +242,28 @@ export class Avatar {
 
   setName(name: string) {
     this.label.setLines(name);
+  }
+
+  /** Swaps the item held in hand: "" / "bat" / "trap" / "egg" (eggDefId picks which egg model). */
+  setHeld(tool: string, eggDefId = "") {
+    const key = tool === "egg" ? `egg:${eggDefId}` : tool;
+    if (key === this.heldTool) return;
+    this.heldTool = key;
+    if (this.held) {
+      this.held.removeFromParent();
+      this.held = null;
+    }
+    if (tool === "bat" || tool === "trap") {
+      this.held = this.lib.instance(tool);
+      this.handSlot.add(this.held);
+    } else if (tool === "egg") {
+      const def = EGG_BY_ID.get(eggDefId);
+      if (!def) return;
+      this.held = this.lib.instance(eggModelId(def));
+      this.held.scale.setScalar(0.75);
+      this.held.rotation.set(-2.5, 0, 0.3); // counter the hand slot's downward tilt so the egg sits upright
+      this.handSlot.add(this.held);
+    }
   }
 
   update(dt: number, anim: Anim, speed: number) {

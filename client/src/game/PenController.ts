@@ -1,17 +1,6 @@
 import * as THREE from "three";
 import { Callbacks, type Room } from "@colyseus/sdk";
-import {
-  EGG_BY_ID,
-  MSG,
-  PEN,
-  RARITY_COLOR,
-  formatShort,
-  inPen,
-  penBounds,
-  type HatchedMsg,
-  type InventoryMsg,
-  type PlantMsg,
-} from "@egg/shared";
+import { MSG, PEN, RARITY_COLOR, formatShort, penBounds, type HatchedMsg, type InventoryMsg } from "@egg/shared";
 import type { ModelLibrary } from "../assets/ModelLibrary.ts";
 import { sfx } from "../audio/Sfx.ts";
 import { PenEggEntity } from "../entities/PenEggEntity.ts";
@@ -29,6 +18,7 @@ interface PenPlayerView {
   penSlots: number;
   pets: Map<string, { species: string; weight: number; mutation: string; income: number }>;
   penEggs: Map<string, { defId: string; size: number; x: number; z: number; growSec: number; readyIn: number }>;
+  equippedEggUid: string;
 }
 
 interface Pen {
@@ -116,6 +106,7 @@ export class PenController {
         this.ctx.scene.add(egg.root);
         pen.eggs.set(uid as string, egg);
         cb.listen(ev, "readyIn", (v: number) => egg.setReadyIn(v));
+        if (sessionId === room.sessionId) sfx.drop(); // confirmed planted (server-authoritative, not an optimistic client sound)
       });
       cb.onRemove(p, "penEggs", (_ev, uid) => {
         const egg = pen.eggs.get(uid as string);
@@ -147,11 +138,6 @@ export class PenController {
 
   // ------------------------------------------------------------------ actions (sent to the server)
 
-  plant(index: number, at?: { x: number; z: number }) {
-    const msg: PlantMsg = { index, ...at };
-    this.room.send(MSG.Plant, msg);
-    sfx.drop();
-  }
   hatch(uid: string) {
     this.room.send(MSG.Hatch, uid);
   }
@@ -186,6 +172,12 @@ export class PenController {
     return Math.max(0, Math.ceil(this.inv.boostLeft - (performance.now() - this.invAt) / 1000));
   }
 
+  /** Seconds until the free chest is claimable again, counted down locally since the last inventory. */
+  get chestReadyIn() {
+    if (!this.inv?.chestReadyIn) return 0;
+    return Math.max(0, Math.ceil(this.inv.chestReadyIn - (performance.now() - this.invAt) / 1000));
+  }
+
   get usedSlots() {
     return this.mine ? this.mine.pets.size + this.mine.penEggs.size : 0;
   }
@@ -213,10 +205,10 @@ export class PenController {
       const entity = this.pens.get(this.room.sessionId)?.eggs.get(uid);
       return { uid, defId: e.defId, readyIn: entity && entity.ready ? 0 : e.readyIn, growSec: e.growSec };
     });
-    this.ctx.panel.update({ inv: this.inv, growing, slots: m.penSlots, money: m.money });
+    this.ctx.panel.update({ inv: this.inv, growing, slots: m.penSlots, money: m.money, equippedEggUid: m.equippedEggUid });
   }
 
-  /** Hatch (ready eggs) and Plant (standing in your pen with eggs in the backpack) prompts. */
+  /** Hatch prompt (hold E) for ready eggs standing nearby. Placing a backpack egg is now equip (Eggs panel) + use (F), not a prompt. */
   private offerPrompts() {
     const { me, prompts } = this.ctx;
     const m = this.mine;
@@ -238,23 +230,6 @@ export class PenController {
         onComplete: () => this.hatch(uid),
       });
     }
-
-    const backpack = this.inv?.eggs ?? [];
-    if (!backpack.length || this.usedSlots >= m.penSlots) return;
-    if (!inPen(m.baseIndex, me.pos.x, me.pos.z, PEN.inset)) return;
-    const blocked = [...own.eggs.values()].some((e) => Math.hypot(e.root.position.x - me.pos.x, e.root.position.z - me.pos.z) < PEN.eggSpacing);
-    if (blocked) return;
-    const def = EGG_BY_ID.get(backpack[0].defId)!;
-    prompts.offer({
-      key: "plant",
-      title: `${def.name}${backpack.length > 1 ? ` (+${backpack.length - 1})` : ""}`,
-      titleColor: RARITY_COLOR[def.rarity],
-      action: "Plant here",
-      at: me.pos.clone().setY(2.4),
-      dist: 99, // lower priority than hatching an egg you're standing next to
-      holdSec: 0.35,
-      onComplete: () => this.plant(0, { x: me.pos.x, z: me.pos.z }),
-    });
   }
 
   // ------------------------------------------------------------------ effects

@@ -53,11 +53,18 @@ interface PlayerView {
   income: number;
   penLevel: number;
   trail: string;
+  offlineEarnings: number;
+  equipped: string;
+  trapsAvailable: number;
+  equippedEggUid: string;
+  equippedEggDefId: string;
 }
 
 interface StateView {
   nightIn: number;
   potionIn: number;
+  isNight: boolean;
+  potionAvailable: boolean;
 }
 
 const AUTOTRAIN = import.meta.env.DEV && new URLSearchParams(location.search).has("autotrain");
@@ -91,6 +98,7 @@ export class Game {
   private pendingGain = { speed: 0, money: 0 };
   private gainTimer = 0;
   private myAvatar: Avatar | null = null;
+  private potionAvailable = false;
   private remotes = new Map<string, RemotePlayer>();
   private views = new Map<string, PlayerView>();
   private room!: Room;
@@ -115,7 +123,8 @@ export class Game {
       equip: (uid, on) => this.pen.equip(uid, on),
       equipBest: () => this.pen.equipBest(),
       buySlot: () => this.pen.buySlot(),
-      plant: (i) => this.pen.plant(i),
+      equipEgg: (uid) => this.equipEgg(uid),
+      unequipEgg: () => this.room?.send(MSG.EquipTool, { tool: "" }),
       hatch: (uid) => this.pen.hatch(uid),
       growAll: import.meta.env.DEV ? () => this.pen.devGrow() : undefined,
     });
@@ -136,11 +145,12 @@ export class Game {
       buyTrail: (id) => this.room.send(MSG.BuyTrail, id),
       equipTrail: (id) => this.room.send(MSG.EquipTrail, id),
     });
-    this.hub = new HubController(this.me, this.prompts, this.menus);
+    this.hub = new HubController(this.me, this.prompts, this.menus, this.pen);
     this.hud.onShopButton = () => this.menus.open("shop");
     this.hud.onIndexButton = () => this.menus.open("index");
     this.hud.onEggButton = () => this.panel.toggle("eggs");
     this.hud.onPawButton = () => this.panel.toggle("pets");
+    this.hud.onOfflineClaim = () => this.room?.send(MSG.ClaimOffline);
     this.heist = new HeistController({
       lib,
       scene: this.world.scene,
@@ -167,7 +177,12 @@ export class Game {
       if (code === "KeyM" && import.meta.env.DEV) this.room?.send(MSG.DevMoney);
       if (code === "KeyK" && import.meta.env.DEV) this.room?.send(MSG.DevGems);
       if (code === "KeyP" && import.meta.env.DEV) for (let i = 0; i < 3; i++) this.room?.send(MSG.DevPet, "forest_chick");
+      if (code === "Digit1") this.hotbarSlotClicked("bat");
+      if (code === "Digit2") this.hotbarSlotClicked("trap");
+      if (code === "Digit3") this.hotbarSlotClicked("egg");
+      if (code === "KeyF") this.useEquipped();
     });
+    this.hud.onEquip = (tool) => this.hotbarSlotClicked(tool);
     addEventListener("resize", () => this.resize());
     this.resize();
   }
@@ -212,6 +227,17 @@ export class Game {
         let lastSpeed = p.speedStat;
         let lastMoney = p.money;
         this.applyMyStats(p);
+        this.hud.showOfflineClaim(p.offlineEarnings > 0 ? p.offlineEarnings : null);
+        cb.listen(p, "offlineEarnings", (v: number) => this.hud.showOfflineClaim(v > 0 ? v : null));
+        this.hud.setEquipped(p.equipped);
+        this.hud.setTrapCount(p.trapsAvailable);
+        this.myAvatar.setHeld(p.equipped, p.equippedEggDefId);
+        cb.listen(p, "equipped", (v: string) => {
+          this.hud.setEquipped(v);
+          this.myAvatar?.setHeld(v, p.equippedEggDefId);
+        });
+        cb.listen(p, "equippedEggDefId", (v: string) => this.myAvatar?.setHeld(p.equipped, v));
+        cb.listen(p, "trapsAvailable", (v: number) => this.hud.setTrapCount(v));
         cb.onChange(p, () => {
           if (p.speedStat > lastSpeed && p.training) this.floatGain(p.speedStat - lastSpeed, "speed");
           if (p.money > lastMoney) this.hud.pulse(this.hud.moneyStat); // income "+$" pops over the pets themselves
@@ -222,9 +248,12 @@ export class Game {
       } else {
         const r = new RemotePlayer(this.lib, p.name, p.baseIndex);
         r.push(p as MoveMsg & PlayerView);
+        r.avatar.setHeld(p.equipped, p.equippedEggDefId);
         this.remotes.set(id, r);
         this.world.scene.add(r.avatar.root);
         cb.onChange(p, () => r.push({ x: p.x, y: p.y, z: p.z, ry: p.ry, anim: p.anim as MoveMsg["anim"] }));
+        cb.listen(p, "equipped", (v: string) => r.avatar.setHeld(v, p.equippedEggDefId));
+        cb.listen(p, "equippedEggDefId", (v: string) => r.avatar.setHeld(p.equipped, v));
       }
     });
 
@@ -249,9 +278,19 @@ export class Game {
     room.onMessage(MSG.Fused, (m: HatchedMsg) => this.reveal.show(m, "FUSED!"));
 
     const state = room.state as StateView;
-    const timers = () => this.hud.setTimers(state.nightIn, state.potionIn);
+    const timers = () => this.hud.setTimers(state.nightIn, state.potionIn, state.isNight, state.potionAvailable);
     cb.listen("nightIn", timers);
     cb.listen("potionIn", timers);
+    cb.listen("isNight", (isNight: boolean) => {
+      timers();
+      this.world.setNightBarrier(isNight);
+      this.hud.showNightBanner(isNight);
+    });
+    cb.listen("potionAvailable", (available: boolean) => {
+      timers();
+      this.potionAvailable = available;
+      this.world.setPotionAvailable(available);
+    });
 
     room.onMessage(MSG.Correct, (m: CorrectMsg) => this.me.snapTo(m.x, m.y, m.z));
     room.onLeave((code) => {
@@ -263,6 +302,30 @@ export class Game {
     });
     this.hud.setStatus("");
     this.loop();
+  }
+
+  /** 1/2/3 or clicking a hotbar slot. Bat/trap toggle directly; the egg slot has no single item to
+   *  pick, so it unequips if you're already holding one, or opens the Eggs panel to choose one. */
+  private hotbarSlotClicked(tool: "bat" | "trap" | "egg") {
+    if (tool === "egg") {
+      if (this.myView?.equipped === "egg") this.room?.send(MSG.EquipTool, { tool: "" });
+      else this.panel.toggle("eggs");
+      return;
+    }
+    const next = this.myView?.equipped === tool ? "" : tool;
+    this.room?.send(MSG.EquipTool, { tool: next });
+  }
+
+  /** Equip a backpack egg (from the Eggs panel) — it shows in your hand until you place it or swap tools. */
+  private equipEgg(uid: string) {
+    this.room?.send(MSG.EquipTool, { tool: "egg", eggUid: uid });
+  }
+
+  /** F / the touch bat button: whatever's equipped decides what happens (nothing if bare-handed). */
+  private useEquipped() {
+    if (this.myView?.equipped === "bat") this.room?.send(MSG.BatHit);
+    else if (this.myView?.equipped === "trap") this.room?.send(MSG.PlaceTrap);
+    else if (this.myView?.equipped === "egg") this.room?.send(MSG.Plant);
   }
 
   private applyMyStats(p: PlayerView) {
@@ -312,7 +375,10 @@ export class Game {
     if (this.pen.readyEggs > 0) return this.hud.setHint("An egg is ready! Walk up to it and hold E to hatch 🐣");
     if (p.eggCount > 0 && this.pen.usedSlots < (this.pen.inv?.slots ?? 0)) {
       this.world.pointAtTreadmill(-1);
-      return this.hud.setHint(this.input.isTouch ? "Walk into your pen and hold 👆 to plant your egg 🥚" : "Walk into your pen and hold E to plant your egg 🥚");
+      if (p.equipped === "egg") {
+        return this.hud.setHint(this.input.isTouch ? "Walk into your pen and tap 🏏 to place your egg 🥚" : "Walk into your pen and press F to place your egg 🥚");
+      }
+      return this.hud.setHint("Open your backpack (🥚) and equip an egg to plant it!");
     }
     const newbie = p.speedStat < 50;
     const running = this.me.onTreadmill;
@@ -356,10 +422,10 @@ export class Game {
 
   private refreshPlayerList() {
     this.listTimer = 0;
-    this.hud.setPlayers(
-      [...this.views.entries()]
-        .map(([id, p]) => ({ name: p.name, speed: p.speedStat, moneyPerSec: p.income, isYou: id === this.room.sessionId }))
-        .sort((a, b) => b.speed - a.speed),
+    const all = [...this.views.entries()].map(([id, p]) => ({ name: p.name, speed: p.speedStat, moneyPerSec: p.income, isYou: id === this.room.sessionId }));
+    this.hud.setPlayers(all);
+    this.world.setLeaderboard(
+      [...all].sort((a, b) => b.moneyPerSec - a.moneyPerSec).slice(0, 3).map((r) => ({ name: r.name, income: r.moneyPerSec })),
     );
   }
 
@@ -411,7 +477,7 @@ export class Game {
 
     this.heist.update(dt);
     this.pen.update(dt);
-    this.hub.update(this.myView);
+    this.hub.update(this.myView, this.potionAvailable);
     this.prompts.commit();
     this.hud.setEggCount(this.pen.attention);
     this.updateMenus(dt);

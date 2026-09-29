@@ -1,4 +1,5 @@
 import {
+  BIOMES,
   EGG_BY_ID,
   FEATURED,
   FUSE,
@@ -48,6 +49,9 @@ const petCard = (p: InvPet, extra = "", selected = false) => {
   </button>`;
 };
 
+/** Biomes with pets to discover, in corridor order (drives the Pet Index's World tab paging). */
+const WORLD_BIOMES = BIOMES.filter((b) => PETS.some((p) => p.biome === b.id));
+
 const countdown = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
   const d = Math.floor(s / 86400);
@@ -70,6 +74,7 @@ export class Menus {
   private sellSort: "weight" | "value" = "value";
   private fuseSel: string[] = [];
   private indexPet = "";
+  private indexBiome = "";
 
   constructor(root: HTMLElement, private actions: MenuActions) {
     this.shop = new Modal(root, "Shop", "#4ce11f", [
@@ -177,7 +182,9 @@ export class Menus {
     const inv = this.data.inv;
     const found = new Set(inv?.discovered ?? []);
     const claimed = new Set(inv?.claimed ?? []);
-    const biome = this.index.tab === "limited" ? "limited" : "forest";
+    const isLimited = this.index.tab === "limited";
+    if (!isLimited && !WORLD_BIOMES.some((b) => b.id === this.indexBiome)) this.indexBiome = WORLD_BIOMES[0]?.id ?? "";
+    const biome = isLimited ? "limited" : this.indexBiome;
     const pets = PETS.filter((p) => p.biome === biome);
     if (!this.indexPet || !pets.some((p) => p.id === this.indexPet)) this.indexPet = pets[0].id;
     const done = pets.filter((p) => found.has(p.id)).length;
@@ -194,10 +201,13 @@ export class Menus {
     const r = INDEX_REWARD[sel.rarity];
     const money = petIncome(sel, sel.baseWeight, "") * r.incomeMult;
     const canClaim = have && !claimed.has(sel.id);
+    const biomeDef = WORLD_BIOMES.find((b) => b.id === biome);
+    const pageLabel = isLimited ? "⏳ Limited" : `${biomeDef?.emoji ?? ""} ${biomeDef?.name ?? ""}`;
+    const canPage = !isLimited && WORLD_BIOMES.length > 1;
     this.index.headerExtra.innerHTML = "";
     this.index.body.innerHTML = `<div class="idx">
       <div class="idx-left">
-        <div class="idx-page">${biome === "forest" ? "🌳 Forest" : "⏳ Limited"}</div>
+        <div class="idx-page">${canPage ? `<button class="idx-nav" data-page="-1">‹</button>` : ""}<span>${pageLabel}</span>${canPage ? `<button class="idx-nav" data-page="1">›</button>` : ""}</div>
         <div class="idx-grid">${cards}</div>
         <div class="idx-bar"><div style="width:${(done / pets.length) * 100}%"></div><span>${done}/${pets.length}</span><em title="Complete the page: +${INDEX_COMPLETE_REWARD.gems} 💎 and +1 pen slot">🎁</em></div>
       </div>
@@ -283,6 +293,14 @@ export class Menus {
     });
     this.index.body.addEventListener("click", (e) => {
       const t = e.target as HTMLElement;
+      const page = t.closest("[data-page]") as HTMLElement | null;
+      if (page) {
+        const i = WORLD_BIOMES.findIndex((b) => b.id === this.indexBiome);
+        const n = WORLD_BIOMES.length;
+        this.indexBiome = WORLD_BIOMES[(i + Number(page.dataset.page) + n) % n].id;
+        this.indexPet = "";
+        return this.renderIndex();
+      }
       const card = t.closest("[data-pet]") as HTMLElement | null;
       if (card) {
         this.indexPet = card.dataset.pet!;

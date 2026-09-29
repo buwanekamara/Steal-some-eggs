@@ -14,6 +14,13 @@ import type { Room } from "@colyseus/sdk";
 import type { Menus } from "../ui/Menus.ts";
 import type { Prompts } from "../ui/Prompts.ts";
 import type { LocalPlayer } from "./LocalPlayer.ts";
+import type { PenController } from "./PenController.ts";
+
+function formatDuration(secs: number) {
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
 
 interface Me {
   baseIndex: number;
@@ -33,17 +40,35 @@ export class HubController {
     private me: LocalPlayer,
     private prompts: Prompts,
     private menus: Menus,
+    private pen: PenController,
   ) {}
 
   bind(room: Room) {
     this.room = room;
   }
 
-  update(view: Me | null) {
+  update(view: Me | null, potionAvailable = false) {
     if (!view || this.me.stun > 0 || this.me.pos.z > 0) return;
     const plot = basePlot(view.baseIndex);
     const here = this.me.pos;
     const d = (x: number, z: number) => Math.hypot(here.x - x, here.z - z);
+
+    if (potionAvailable) {
+      const s = useSpot(HUB_BUILDINGS.potion);
+      const dist = d(s.x, s.z);
+      if (dist < USE_RANGE - 1) {
+        this.prompts.offer({
+          key: "claim:potion",
+          title: "Potion",
+          titleColor: "#5dff3a",
+          action: "Claim (x2 Speed)",
+          at: new THREE.Vector3(s.x, 3, s.z),
+          dist,
+          holdSec: 0.25,
+          onComplete: () => this.room.send(MSG.ClaimPotion),
+        });
+      }
+    }
 
     // Treadmill upgrade — also offered while running on the treadmill (E doesn't knock you off).
     const tDist = d(plot.treadmillSign.x, plot.treadmillSign.z);
@@ -78,6 +103,25 @@ export class HubController {
         holdSec: 0.4,
         onComplete: () => next && this.room.send(MSG.UpgradePen),
       });
+    }
+
+    // Free chest: per-player cooldown (shown via the pen's inventory snapshot).
+    {
+      const s = useSpot(HUB_BUILDINGS.chest);
+      const dist = d(s.x, s.z);
+      const readyIn = this.pen.chestReadyIn;
+      if (dist < USE_RANGE - 1) {
+        this.prompts.offer({
+          key: "claim:chest",
+          title: readyIn <= 0 ? "Free Chest" : `Free Chest · ${formatDuration(readyIn)}`,
+          titleColor: readyIn <= 0 ? "#5dff3a" : "#ff6b6b",
+          action: readyIn <= 0 ? "Open" : "Not yet",
+          at: new THREE.Vector3(s.x, 3, s.z),
+          dist,
+          holdSec: 0.25,
+          onComplete: () => readyIn <= 0 && this.room.send(MSG.ClaimChest),
+        });
+      }
     }
 
     // Stalls and machines open their menus.

@@ -1,4 +1,4 @@
-import { biomeAt, formatShort } from "@egg/shared";
+import { WORLD_EVENTS, biomeAt, formatShort } from "@egg/shared";
 
 export interface PlayerRow {
   name: string;
@@ -6,6 +6,8 @@ export interface PlayerRow {
   moneyPerSec: number;
   isYou: boolean;
 }
+
+type SortKey = "name" | "speed" | "moneyPerSec";
 
 /**
  * HTML overlay HUD. Layout follows the reference:
@@ -22,9 +24,17 @@ export class Hud {
   private slowToggle: HTMLElement;
   private helpEl: HTMLElement;
   private nightEl: HTMLElement;
+  private nightIcon: HTMLElement;
+  private nightRow: HTMLElement;
   private potionEl: HTMLElement;
   private hintEl: HTMLElement;
   private overlayEl: HTMLElement;
+  private nightBannerEl: HTMLElement;
+  private offlineBannerEl: HTMLElement;
+  private hotbarEl: HTMLElement;
+  private rows: PlayerRow[] = [];
+  private sortKey: SortKey = "moneyPerSec";
+  private sortDesc = true;
   /** Speed / money counters (targets for the flying gain numbers). */
   readonly speedStat: HTMLElement;
   readonly moneyStat: HTMLElement;
@@ -33,6 +43,8 @@ export class Hud {
   onShopButton?: () => void;
   onIndexButton?: () => void;
   onPawButton?: () => void;
+  onOfflineClaim?: () => void;
+  onEquip?: (tool: "bat" | "trap" | "egg") => void;
 
   constructor(private root: HTMLElement, isTouch: boolean) {
     root.insertAdjacentHTML(
@@ -56,16 +68,28 @@ export class Hud {
         </div>
         <div class="hud-timers">
           <div class="timer boost" hidden title="x2 Speed boost"><span class="icon">⚡</span><span class="val"></span></div>
-          <div class="timer potion" title="Potion event (Phase 6)"><span class="icon">🧪</span><span class="val"></span></div>
-          <div class="timer night" title="Night event (Phase 6)"><span class="icon">🌙</span><span class="val"></span></div>
+          <div class="timer potion" title="Potion: claim it in the hub for x2 Speed-gain"><span class="icon">🧪</span><span class="val"></span></div>
+          <div class="timer night" title="Night: every biome seals off"><span class="icon">🌙</span><span class="val"></span></div>
         </div>
         <div class="hint" hidden></div>
+        <div class="night-banner" hidden>🌙 <b>Night has fallen</b> — biomes sealed off, eggs hatch <b>${WORLD_EVENTS.nightGrowMult}x</b> faster!</div>
+        <div class="offline-banner" hidden>💰 <b>Welcome back!</b> You earned <span class="amt"></span> while away.<button class="claim-btn">Claim</button></div>
+        <div class="hotbar panel">
+          <div class="hb-slot" data-tool="bat" title="Bat (1) — knocks a nearby carrier's egg loose"><span class="hb-key">1</span><span class="hb-icon">🏏</span></div>
+          <div class="hb-slot" data-tool="trap" title="Trap (2) — place it, another player stepping on it drops their egg"><span class="hb-key">2</span><span class="hb-icon">🪤</span><span class="hb-count"></span></div>
+          <div class="hb-slot" data-tool="egg" title="Equip an egg from your backpack (🥚), then use it to place it in your pen"><span class="hb-key">3</span><span class="hb-icon egg-icon">🥚</span></div>
+        </div>
         <div class="overlay" hidden></div>
-        <div class="player-list panel"><div class="pl-head"><span>People</span><span>Money/s</span><span>Speed</span></div><div class="pl-rows"></div></div>
+        <div class="player-list panel">
+          <div class="pl-head">
+            <span data-key="name">People</span><span data-key="moneyPerSec">Money/s</span><span data-key="speed">Speed</span>
+          </div>
+          <div class="pl-rows"></div>
+        </div>
         <div class="debug" hidden></div>
         <div class="help panel">
           <b>Controls</b><br/>
-          ${isTouch ? "Left thumb: move · Right side drag: camera · ⬆: jump · Hold 👆 on an egg: steal" : "WASD / arrows: move · Space: jump · Hold E: steal egg · Drag mouse: camera · Wheel: zoom"}<br/>
+          ${isTouch ? "Left thumb: move · Right side drag: camera · ⬆: jump · Tap 1/2/3 to equip bat/trap/egg, 🏏 to use it · Hold 👆 on an egg: steal" : "WASD / arrows: move · Space: jump · Hold E: steal egg · 1/2/3: equip bat/trap/egg · F: use it · Drag mouse: camera · Wheel: zoom"}<br/>
           ${isTouch ? "" : "C: Slow Mode · Tab: pets · F3: debug info · H: hide this help<br/><i>Dev: = ×10 Speed stat · - reset · J: free egg · G: finish growing eggs · M: +$1M · K: +100 💎 · P: 3 Chicks · URL ?profile=name for a 2nd test player</i>"}
         </div>
       </div>`,
@@ -79,9 +103,14 @@ export class Hud {
     this.slowToggle = q(".slow-mode");
     this.helpEl = q(".help");
     this.nightEl = q(".timer.night .val");
+    this.nightIcon = q(".timer.night .icon");
+    this.nightRow = q(".timer.night");
     this.potionEl = q(".timer.potion .val");
     this.hintEl = q(".hint");
     this.overlayEl = q(".overlay");
+    this.nightBannerEl = q(".night-banner");
+    this.offlineBannerEl = q(".offline-banner");
+    this.hotbarEl = q(".hotbar");
     this.speedStat = q(".stat.speed");
     this.moneyStat = q(".stat.money");
     this.slowToggle.addEventListener("click", () => this.onSlowModeChange?.(!this.slowToggle.classList.contains("on")));
@@ -89,6 +118,18 @@ export class Hud {
     q(".big-btn.shop").addEventListener("click", () => this.onShopButton?.());
     q(".big-btn.index").addEventListener("click", () => this.onIndexButton?.());
     q(".sq-btn.paw").addEventListener("click", () => this.onPawButton?.());
+    this.offlineBannerEl.querySelector(".claim-btn")!.addEventListener("click", () => this.onOfflineClaim?.());
+    for (const slot of this.hotbarEl.querySelectorAll<HTMLElement>(".hb-slot")) {
+      slot.addEventListener("click", () => this.onEquip?.(slot.dataset.tool as "bat" | "trap"));
+    }
+    for (const head of root.querySelectorAll<HTMLElement>(".pl-head [data-key]")) {
+      head.addEventListener("click", () => {
+        const key = head.dataset.key as SortKey;
+        this.sortDesc = key === this.sortKey ? !this.sortDesc : true;
+        this.sortKey = key;
+        this.renderPlayers();
+      });
+    }
     setTimeout(() => this.helpEl.classList.add("faded"), 12000);
   }
 
@@ -108,14 +149,27 @@ export class Hud {
   }
 
   /** Countdown timers, reference style: "in 3m 9s", red in the last 15 s. */
-  setTimers(nightIn: number, potionIn: number) {
-    for (const [el, secs] of [
-      [this.nightEl, nightIn],
-      [this.potionEl, potionIn],
-    ] as const) {
+  setTimers(nightIn: number, potionIn: number, isNight: boolean, potionAvailable: boolean) {
+    for (const [el, secs] of [[this.nightEl, nightIn]] as const) {
       el.textContent = `in ${formatDuration(secs)}`;
       el.classList.toggle("soon", secs <= 15);
     }
+    this.nightIcon.textContent = isNight ? "☀️" : "🌙";
+    this.nightRow.title = isNight ? "Day resumes and biomes reopen" : "Night: every biome seals off";
+
+    this.potionEl.classList.toggle("ready", potionAvailable);
+    if (potionAvailable) {
+      this.potionEl.textContent = "Ready!";
+      this.potionEl.classList.remove("soon");
+    } else {
+      this.potionEl.textContent = `in ${formatDuration(potionIn)}`;
+      this.potionEl.classList.toggle("soon", potionIn <= 15);
+    }
+  }
+
+  /** Persistent banner while night is active (biomes sealed off), shown/hidden on the isNight transition. */
+  showNightBanner(isNight: boolean) {
+    this.nightBannerEl.hidden = !isNight;
   }
 
   setGems(n: number) {
@@ -189,12 +243,42 @@ export class Hud {
   }
 
   setPlayers(rows: PlayerRow[]) {
-    this.listEl.innerHTML = rows
+    this.rows = rows;
+    this.renderPlayers();
+  }
+
+  private renderPlayers() {
+    const dir = this.sortDesc ? -1 : 1;
+    const sorted = [...this.rows].sort((a, b) => {
+      if (this.sortKey === "name") return dir * a.name.localeCompare(b.name);
+      return dir * (a[this.sortKey] - b[this.sortKey]);
+    });
+    this.listEl.innerHTML = sorted
       .map(
         (r) =>
           `<div class="pl-row${r.isYou ? " you" : ""}"><span>${escapeHtml(r.name)}</span><span>${formatShort(r.moneyPerSec)}</span><span>${formatShort(r.speed)}</span></div>`,
       )
       .join("");
+    for (const head of this.root.querySelectorAll<HTMLElement>(".pl-head [data-key]")) {
+      head.classList.toggle("sorted", head.dataset.key === this.sortKey);
+      head.textContent = (head.dataset.key === this.sortKey ? (this.sortDesc ? "▼ " : "▲ ") : "") + (head.dataset.key === "name" ? "People" : head.dataset.key === "moneyPerSec" ? "Money/s" : "Speed");
+    }
+  }
+
+  /** Banner + Claim button shown once after joining if there's pending offline income (null hides it). */
+  showOfflineClaim(amount: number | null) {
+    this.offlineBannerEl.hidden = !amount;
+    if (amount) (this.offlineBannerEl.querySelector(".amt") as HTMLElement).textContent = `$${formatShort(amount)}`;
+  }
+
+  /** Highlights the equipped hotbar slot ("" = bare hands). */
+  setEquipped(tool: string) {
+    for (const slot of this.hotbarEl.querySelectorAll<HTMLElement>(".hb-slot")) slot.classList.toggle("on", slot.dataset.tool === tool);
+  }
+
+  /** "x3" stock badge on the trap slot. */
+  setTrapCount(n: number) {
+    (this.hotbarEl.querySelector('.hb-slot[data-tool="trap"] .hb-count') as HTMLElement).textContent = `x${n}`;
   }
 }
 

@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEV, EGG_BY_ID, HATCH, MUTATION_BY_ID, PEN, PEN_LEVELS, PET_BY_ID, TRAIL_BY_ID } from "@egg/shared";
+import { DEV, EGG_BY_ID, HATCH, MUTATION_BY_ID, newUid, PEN, PEN_LEVELS, PET_BY_ID, TRAIL_BY_ID } from "@egg/shared";
 
 /** A secured egg waiting in the backpack (not planted yet). */
 export interface OwnedEgg {
+  uid: string;
   defId: string;
   size: number;
   obtainedAt: number;
@@ -50,6 +51,8 @@ export interface Profile {
   trail: string;
   /** x2 treadmill Speed until this time (ms). */
   boostUntil: number;
+  /** Free chest: ms timestamp when it's claimable again (0 = ready now). */
+  nextChestAt: number;
   /** Pet species ever hatched (for the Index and "NEW!" tags). */
   discovered: string[];
   /** Species whose Index reward was claimed. */
@@ -85,6 +88,7 @@ export function newProfile(name: string): Profile {
     trailsOwned: [],
     trail: "",
     boostUntil: 0,
+    nextChestAt: 0,
     discovered: [],
     claimed: [],
     completed: [],
@@ -108,7 +112,7 @@ function migrate(raw: Partial<Profile>, name: string): Profile {
     eggs: Array.isArray(raw.eggs)
       ? raw.eggs
           .filter((e) => e && typeof e.defId === "string" && EGG_BY_ID.has(e.defId))
-          .map((e) => ({ defId: e.defId, size: num(e.size, 1), obtainedAt: num(e.obtainedAt, 0) }))
+          .map((e) => ({ uid: typeof e.uid === "string" && e.uid ? e.uid : newUid("e"), defId: e.defId, size: num(e.size, 1), obtainedAt: num(e.obtainedAt, 0) }))
       : [],
     penEggs: Array.isArray(raw.penEggs)
       ? raw.penEggs
@@ -141,6 +145,7 @@ function migrate(raw: Partial<Profile>, name: string): Profile {
     trailsOwned: Array.isArray(raw.trailsOwned) ? raw.trailsOwned.filter((t) => typeof t === "string" && TRAIL_BY_ID.has(t)) : [],
     trail: typeof raw.trail === "string" && TRAIL_BY_ID.has(raw.trail) && raw.trailsOwned?.includes(raw.trail) ? raw.trail : "",
     boostUntil: num(raw.boostUntil, 0),
+    nextChestAt: num(raw.nextChestAt, 0),
     discovered: Array.isArray(raw.discovered) ? raw.discovered.filter((s) => typeof s === "string" && PET_BY_ID.has(s)) : [],
     claimed: Array.isArray(raw.claimed) ? raw.claimed.filter((s) => typeof s === "string" && PET_BY_ID.has(s)) : [],
     completed: Array.isArray(raw.completed) ? raw.completed.filter((s) => typeof s === "string") : [],

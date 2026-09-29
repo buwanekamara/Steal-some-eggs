@@ -139,8 +139,10 @@ export function groundHeightAt(x: number, z: number): number {
 export const HUB_BUILDINGS = {
   sell: { x: -60, z: -18, label: "SELL" },
   fuse: { x: -30, z: -18, label: "Fuse Machine" },
+  potion: { x: 0, z: -18, label: "POTION" },
   trails: { x: 30, z: -18, label: "TRAILS SHOP" },
   leaderboard: { x: 60, z: -18, label: "MOST MONEY/s" },
+  chest: { x: 90, z: -18, label: "FREE CHEST" },
 } as const;
 
 /** Where players stand to use a hub building: in front of it (buildings face the bases, -Z). */
@@ -163,6 +165,7 @@ export interface BiomeDef {
   sky: "day" | "night";
 }
 
+/** Fallback/legacy length some callers still reference; biomes now vary in length (see biomeLength). */
 export const BIOME_LENGTH = 200;
 
 export const BIOMES: BiomeDef[] = [
@@ -180,17 +183,35 @@ export const BIOMES: BiomeDef[] = [
   { id: "celestial", name: "Celestial Rift", emoji: "😇", recommendedSpeed: 20_000_000_000, floor: "#f2f5ff", wall: "#d8c68e", wallAlt: "#cbb87e", wallTop: "#ffd966", sky: "day" },
 ];
 
-export const CORRIDOR_END_Z = BIOMES.length * BIOME_LENGTH;
+/** Biomes start short near the hub and gradually stretch out the further you go. */
+const BIOME_BASE_LENGTH = 90;
+const BIOME_LENGTH_STEP = 14;
+
+export function biomeLength(index: number): number {
+  return BIOME_BASE_LENGTH + Math.max(0, index) * BIOME_LENGTH_STEP;
+}
+
+const BIOME_STARTS: number[] = (() => {
+  const starts: number[] = [];
+  let z = 0;
+  for (let i = 0; i < BIOMES.length; i++) {
+    starts.push(z);
+    z += biomeLength(i);
+  }
+  return starts;
+})();
+
+export const CORRIDOR_END_Z = BIOME_STARTS[BIOMES.length - 1] + biomeLength(BIOMES.length - 1);
 
 export function biomeStartZ(index: number): number {
-  return index * BIOME_LENGTH;
+  return BIOME_STARTS[index] ?? 0;
 }
 
 /** Biome at a world z, or null inside the hub. */
 export function biomeAt(z: number): BiomeDef | null {
   if (z < 0) return null;
-  const i = Math.min(BIOMES.length - 1, Math.floor(z / BIOME_LENGTH));
-  return BIOMES[i];
+  for (let i = BIOMES.length - 1; i >= 0; i--) if (z >= BIOME_STARTS[i]) return BIOMES[i];
+  return null;
 }
 
 // ---------------------------------------------------------------- bounds

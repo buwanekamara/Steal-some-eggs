@@ -1,32 +1,42 @@
 import { Room, type Client } from "colyseus";
 import {
   Anim,
+  CHEST,
   CLOSE,
+  HUB_BUILDINGS,
   MAX_PLAYERS,
   MOVEMENT,
   MSG,
   NETWORK,
+  OFFLINE,
+  PVP,
+  SAFE_ZONE_Z,
   SAVE,
+  TRAP,
   TREADMILL,
+  USE_RANGE,
   WORLD_EVENTS,
   basePlot,
   clampToWorld,
+  formatShort,
   isOnBelt,
+  newUid,
   sanitizeName,
   treadmillLevel,
   trailMult,
+  useSpot,
   walkSpeedFromStat,
   type CorrectMsg,
+  type EquipMsg,
   type JoinOptions,
   type KnockMsg,
   type MoveMsg,
   type NotifyMsg,
-  type PlantMsg,
   type ShopBuyMsg,
   type SecuredMsg,
 } from "@egg/shared";
 import { JsonFileProfileStore, isValidProfileId, type Profile, type ProfileStore } from "../persistence/ProfileStore.ts";
-import { GameState, PlayerState } from "../schema/GameState.ts";
+import { GameState, PlayerState, TrapState } from "../schema/GameState.ts";
 import { HeistSystem } from "../systems/HeistSystem.ts";
 import { PenSystem } from "../systems/PenSystem.ts";
 import { ProgressSystem } from "../systems/ProgressSystem.ts";
@@ -44,6 +54,10 @@ interface PlayerMeta {
   /** While knocked back (ms timestamp): no actions, and bigger moves are allowed. */
   knockUntil: number;
   knockSpeed: number;
+  /** Next time (ms timestamp) this player's bat is ready to swing again. */
+  batReadyAt: number;
+  /** Next time (ms timestamp) a trap charge regenerates (0 = already full). */
+  trapRegenAt: number;
 }
 
 /** Testing shortcuts; disabled when NODE_ENV=production. */
@@ -80,7 +94,7 @@ export class GameRoom extends Room<{ state: GameState }> {
       const m = this.meta.get(id);
       const p = this.state.players.get(id);
       if (!m || !p) return;
-      m.profile.eggs.push({ defId: def.id, size, obtainedAt: Date.now() });
+      m.profile.eggs.push({ uid: newUid("e"), defId: def.id, size, obtainedAt: Date.now() });
       m.profile.stats.eggsSecured++;
       p.eggCount = m.profile.eggs.length;
       const msg: SecuredMsg = { defId: def.id, size, total: p.eggCount };
@@ -122,7 +136,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.onMessage(MSG.Drop, (client) => this.heist.drop(client.sessionId));
     this.heist.init();
 
-    this.onMessage(MSG.Plant, (client, msg: unknown) => this.pens.plant(client.sessionId, typeof msg === "object" && msg ? (msg as PlantMsg) : undefined));
+    this.onMessage(MSG.Plant, (client) => this.pens.plant(client.sessionId));
     this.onMessage(MSG.Hatch, (client, id: unknown) => this.pens.hatch(client.sessionId, id));
     this.onMessage(MSG.Equip, (client, id: unknown) => this.pens.equip(client.sessionId, id, true));
     this.onMessage(MSG.Unequip, (client, id: unknown) => this.pens.equip(client.sessionId, id, false));
@@ -140,6 +154,12 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.onMessage(MSG.Fuse, (client, uids: unknown) => this.pens.fuse(client.sessionId, uids));
     this.onMessage(MSG.ShopBuy, (client, msg: unknown) => this.progress.shopBuy(client.sessionId, typeof msg === "object" && msg ? (msg as ShopBuyMsg) : undefined));
     this.onMessage(MSG.ClaimIndex, (client, which: unknown) => this.progress.claimIndex(client.sessionId, which));
+    this.onMessage(MSG.ClaimPotion, (client) => this.claimPotion(client));
+    this.onMessage(MSG.BatHit, (client) => this.batHit(client));
+    this.onMessage(MSG.ClaimChest, (client) => this.claimChest(client));
+    this.onMessage(MSG.ClaimOffline, (client) => this.claimOffline(client));
+    this.onMessage(MSG.EquipTool, (client, tool: unknown) => this.equipTool(client, tool));
+    this.onMessage(MSG.PlaceTrap, (client) => this.placeTrap(client));
 
     if (DEV_CHEATS) {
       this.onMessage(MSG.DevSpeed, (client, action: unknown) => {
@@ -185,9 +205,13 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.state.players.set(client.sessionId, p);
 
     const now = Date.now();
-    const meta: PlayerMeta = { profileId, profile, lastMoveAt: now, lastSaveAt: now, stepAccum: 0, released: false, knockUntil: 0, knockSpeed: 0 };
+    const meta: PlayerMeta = { profileId, profile, lastMoveAt: now, lastSaveAt: now, stepAccum: 0, released: false, knockUntil: 0, knockSpeed: 0, batReadyAt: 0, trapRegenAt: 0 };
     this.meta.set(client.sessionId, meta);
     this.pens.attach(client.sessionId, p, profile);
+
+    // Offline earnings: your pen income kept paying out (at a reduced rate) while you were away.
+    const offlineSec = Math.min(OFFLINE.maxHours * 3600, Math.max(0, (now - profile.lastSeen) / 1000));
+    if (offlineSec >= OFFLINE.minSec && p.income > 0) p.offlineEarnings = Math.round(p.income * offlineSec * OFFLINE.rate);
 
     activeSessions.set(profileId, async () => {
       await this.saveProfile(client.sessionId);
@@ -223,8 +247,10 @@ export class GameRoom extends Room<{ state: GameState }> {
       const m = this.meta.get(sessionId);
       if (!m) return;
       this.train(p, m, dt);
+      this.regenTraps(p, m);
     });
     this.heist.tick(dt);
+    this.tickTraps();
     this.updateWorldTimers();
   }
 
@@ -264,10 +290,209 @@ export class GameRoom extends Room<{ state: GameState }> {
     m.profile.stats.steps += steps;
   }
 
+  /** Which potionEverySec cycle we've last spawned the potion for (-1 = none yet). */
+  private potionCycleSeen = -1;
+
   private updateWorldTimers() {
     const elapsed = (Date.now() - SERVER_START) / 1000;
-    this.state.nightIn = Math.ceil(WORLD_EVENTS.nightEverySec - (elapsed % WORLD_EVENTS.nightEverySec));
-    this.state.potionIn = Math.ceil(WORLD_EVENTS.potionEverySec - ((elapsed + WORLD_EVENTS.potionOffsetSec) % WORLD_EVENTS.potionEverySec));
+    const cyclePos = elapsed % WORLD_EVENTS.nightEverySec;
+    const wasNight = this.state.isNight;
+    this.state.isNight = cyclePos < WORLD_EVENTS.nightDurationSec;
+    this.state.nightIn = Math.ceil(this.state.isNight ? WORLD_EVENTS.nightDurationSec - cyclePos : WORLD_EVENTS.nightEverySec - cyclePos);
+    if (wasNight !== this.state.isNight) {
+      this.pens.setNight(this.state.isNight);
+      if (this.state.isNight) this.beginNight();
+    }
+
+    const potionElapsed = elapsed + WORLD_EVENTS.potionOffsetSec;
+    this.state.potionIn = Math.ceil(WORLD_EVENTS.potionEverySec - (potionElapsed % WORLD_EVENTS.potionEverySec));
+    const potionCycle = Math.floor(potionElapsed / WORLD_EVENTS.potionEverySec);
+    if (potionCycle !== this.potionCycleSeen) {
+      this.potionCycleSeen = potionCycle;
+      this.state.potionAvailable = true; // freshly spawned; stays true until someone claims it
+    }
+  }
+
+  /** Swing the bat: hits the nearest player roughly in front of you, in range and outside the safe zone (carrying or not — racing for an egg is a fair fight too). */
+  private batHit(client: Client) {
+    const p = this.state.players.get(client.sessionId);
+    const m = this.meta.get(client.sessionId);
+    if (!p || !m || p.equipped !== "bat") return;
+    if (p.z < SAFE_ZONE_Z) return this.notify(client, "Can't use the bat in the safe zone.", "bad");
+    const now = Date.now();
+    if (now < m.knockUntil || now < m.batReadyAt) return;
+    m.batReadyAt = now + PVP.cooldownSec * 1000;
+
+    let targetId: string | null = null;
+    let bestDist: number = PVP.hitRange;
+    this.state.players.forEach((other, otherId) => {
+      if (otherId === client.sessionId || other.z < SAFE_ZONE_Z) return;
+      const dx = other.x - p.x;
+      const dz = other.z - p.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > bestDist) return;
+      let diff = Math.abs(Math.atan2(dx, dz) - p.ry);
+      if (diff > Math.PI) diff = 2 * Math.PI - diff;
+      if (diff > (PVP.arcDeg * Math.PI) / 180) return;
+      targetId = otherId;
+      bestDist = dist;
+    });
+    if (!targetId) return;
+
+    const target = this.state.players.get(targetId)!;
+    const hadEgg = !!target.carrying;
+    this.heist.drop(targetId);
+    let dx = target.x - p.x;
+    let dz = target.z - p.z;
+    const len = Math.hypot(dx, dz) || 1;
+    dx /= len;
+    dz /= len;
+    const knockMsg: KnockMsg = {
+      vx: dx * PVP.knockback.horizontal,
+      vy: PVP.knockback.up,
+      vz: dz * PVP.knockback.horizontal,
+      stunMs: PVP.stunSec * 1000,
+      by: p.name,
+      kind: "bat",
+      droppedEgg: hadEgg,
+    };
+    this.knock(targetId, knockMsg);
+    this.notify(client, hadEgg ? `Bapped ${target.name}! Their egg dropped.` : `Bapped ${target.name}!`, "good");
+  }
+
+  /** Hold "" / "bat" / "trap" — always allowed, even in the safe zone (only using it is restricted). */
+  private equipTool(client: Client, msg: unknown) {
+    const p = this.state.players.get(client.sessionId);
+    const m = this.meta.get(client.sessionId);
+    if (!p || !m || typeof msg !== "object" || !msg) return;
+    const { tool, eggUid } = msg as EquipMsg;
+    if (tool !== "" && tool !== "bat" && tool !== "trap" && tool !== "egg") return;
+
+    if (tool === "egg") {
+      const owned = m.profile.eggs.find((e) => e.uid === eggUid);
+      if (!owned) return;
+      p.equipped = "egg";
+      p.equippedEggUid = owned.uid;
+      p.equippedEggDefId = owned.defId;
+      return;
+    }
+    p.equipped = tool;
+    p.equippedEggUid = "";
+    p.equippedEggDefId = "";
+  }
+
+  /** A trap charge regenerates every TRAP.rechargeSec while below the cap. */
+  private regenTraps(p: PlayerState, m: PlayerMeta) {
+    if (p.trapsAvailable >= TRAP.maxCarried) {
+      m.trapRegenAt = 0;
+      return;
+    }
+    const now = Date.now();
+    if (!m.trapRegenAt) m.trapRegenAt = now + TRAP.rechargeSec * 1000;
+    if (now < m.trapRegenAt) return;
+    p.trapsAvailable++;
+    m.trapRegenAt = p.trapsAvailable >= TRAP.maxCarried ? 0 : now + TRAP.rechargeSec * 1000;
+  }
+
+  /** Drop a trap at my feet: must have it equipped, a charge free, and be outside the safe zone. */
+  private placeTrap(client: Client) {
+    const p = this.state.players.get(client.sessionId);
+    const m = this.meta.get(client.sessionId);
+    if (!p || !m || p.equipped !== "trap") return;
+    if (p.z < SAFE_ZONE_Z) return this.notify(client, "Can't place traps in the safe zone.", "bad");
+    if (p.trapsAvailable <= 0) return this.notify(client, "No traps left — wait for one to recharge.", "bad");
+    p.trapsAvailable--;
+    const trap = new TrapState();
+    trap.x = p.x;
+    trap.z = p.z;
+    trap.ownerId = client.sessionId;
+    trap.placedAt = Date.now();
+    this.state.traps.set(`t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, trap);
+    this.notify(client, "Trap placed!", "good");
+  }
+
+  /** Traps expire on their own, and catch the first non-owner who steps within range: drop their egg, stun them. */
+  private tickTraps() {
+    const now = Date.now();
+    const gone: string[] = [];
+    this.state.traps.forEach((trap, id) => {
+      if (now - trap.placedAt > TRAP.lifetimeSec * 1000) return void gone.push(id);
+      let triggered = false;
+      this.state.players.forEach((p, sessionId) => {
+        if (triggered || sessionId === trap.ownerId) return;
+        if (Math.hypot(p.x - trap.x, p.z - trap.z) > TRAP.triggerRadius) return;
+        triggered = true;
+        const hadEgg = !!p.carrying;
+        this.heist.drop(sessionId);
+        const owner = this.state.players.get(trap.ownerId);
+        const knockMsg: KnockMsg = { vx: 0, vy: 6, vz: 0, stunMs: TRAP.stunSec * 1000, by: owner?.name, kind: "trap", droppedEgg: hadEgg };
+        this.knock(sessionId, knockMsg);
+        const ownerClient = this.clients.getById(trap.ownerId);
+        if (ownerClient) this.notify(ownerClient, `Your trap caught ${p.name}!`, "good");
+      });
+      if (triggered) gone.push(id);
+    });
+    for (const id of gone) this.state.traps.delete(id);
+  }
+
+  /** Claim the potion pickup: must be standing at its spot while it's available. */
+  private claimPotion(client: Client) {
+    const p = this.state.players.get(client.sessionId);
+    if (!p || !this.state.potionAvailable) return;
+    const spot = useSpot(HUB_BUILDINGS.potion);
+    if (Math.hypot(p.x - spot.x, p.z - spot.z) > USE_RANGE) return this.notify(client, "Go to the potion to claim it.", "bad");
+    this.state.potionAvailable = false;
+    this.progress.grantSpeedBoost(client.sessionId, WORLD_EVENTS.potionBoostMin);
+    this.notify(client, `Potion claimed! x2 Speed for ${WORLD_EVENTS.potionBoostMin} minutes.`, "good");
+  }
+
+  /** Claim the free chest: must be standing at its spot and off cooldown. */
+  private claimChest(client: Client) {
+    const p = this.state.players.get(client.sessionId);
+    const m = this.meta.get(client.sessionId);
+    if (!p || !m) return;
+    const now = Date.now();
+    if (now < m.profile.nextChestAt) return;
+    const spot = useSpot(HUB_BUILDINGS.chest);
+    if (Math.hypot(p.x - spot.x, p.z - spot.z) > USE_RANGE) return this.notify(client, "Go to the Free Chest to claim it.", "bad");
+
+    m.profile.nextChestAt = now + CHEST.cooldownMin * 60_000;
+    const money = Math.round(CHEST.moneyMin + Math.random() * (CHEST.moneyMax - CHEST.moneyMin));
+    p.money += money;
+    let text = `Free Chest: +$${formatShort(money)}`;
+    if (Math.random() < CHEST.gemChance) {
+      m.profile.gems += CHEST.gemAmount;
+      text += ` and +${CHEST.gemAmount} 💎`;
+    }
+    this.notify(client, text, "good");
+    this.pens.changed(client.sessionId); // refreshes the Gems display and saves
+  }
+
+  /** Claim the offline-earnings banner shown after joining. */
+  private claimOffline(client: Client) {
+    const p = this.state.players.get(client.sessionId);
+    if (!p || p.offlineEarnings <= 0) return;
+    p.money += p.offlineEarnings;
+    this.notify(client, `Welcome back! Claimed $${formatShort(p.offlineEarnings)} in offline earnings.`, "good");
+    p.offlineEarnings = 0;
+    void this.saveProfile(client.sessionId);
+  }
+
+  /** Night just fell: pull every player still out in a biome back to their base, dropping any carried egg. */
+  private beginNight() {
+    this.state.players.forEach((p, sessionId) => {
+      if (p.z < SAFE_ZONE_Z) return;
+      if (p.carrying) this.heist.drop(sessionId);
+      const spawn = basePlot(p.baseIndex).spawn;
+      p.x = spawn.x;
+      p.y = 0;
+      p.z = spawn.z;
+      const client = this.clients.getById(sessionId);
+      if (!client) return;
+      const back: CorrectMsg = { x: p.x, y: p.y, z: p.z };
+      client.send(MSG.Correct, back);
+      this.notify(client, `Night has fallen — everyone's pulled back to the hub, but eggs grow ${WORLD_EVENTS.nightGrowMult}x faster until it passes!`, "info");
+    });
   }
 
   // ------------------------------------------------------------------ persistence
@@ -324,8 +549,10 @@ export class GameRoom extends Room<{ state: GameState }> {
     const dz = msg.z - p.z;
     const bounded = clampToWorld(msg.x, msg.z);
     const outOfBounds = Math.abs(bounded.x - msg.x) > 0.01 || Math.abs(bounded.z - msg.z) > 0.01;
+    // Night: every biome is sealed off, so the corridor is off-limits like a wall at the safe-zone line.
+    const blockedByNight = this.state.isNight && msg.z >= SAFE_ZONE_Z;
 
-    if (Math.hypot(dx, dz) > maxStep || outOfBounds || msg.y < -1 || msg.y > MOVEMENT.maxY) {
+    if (Math.hypot(dx, dz) > maxStep || outOfBounds || blockedByNight || msg.y < -1 || msg.y > MOVEMENT.maxY) {
       const back: CorrectMsg = { x: p.x, y: Math.max(0, Math.min(p.y, MOVEMENT.maxY)), z: p.z };
       client.send(MSG.Correct, back);
       return;

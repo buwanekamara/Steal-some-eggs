@@ -10,12 +10,18 @@ import { fileURLToPath } from "node:url";
 import { Client, type Room } from "@colyseus/sdk";
 import {
   Anim,
+  BIOMES,
+  CHEST,
   CLOSE,
   EGG_RULES,
   EggStatus,
   FEATURED,
+  GUARDIANS,
   HUB_BUILDINGS,
+  NESTS,
+  PVP,
   SELL_MULT,
+  TRAP,
   useSpot,
   GuardianMode,
   MSG,
@@ -23,6 +29,7 @@ import {
   ROOM_NAME,
   TREADMILL_SHAPE,
   basePlot,
+  biomeStartZ,
   slotCost,
   walkSpeedFromStat,
   type CorrectMsg,
@@ -45,6 +52,7 @@ interface PlayerLike {
   x: number;
   y: number;
   z: number;
+  ry: number;
   speedStat: number;
   training: boolean;
   carrying: string;
@@ -57,6 +65,16 @@ interface PlayerLike {
   treadmillLevel: number;
   pets: Map<string, { species: string; income: number }>;
   penEggs: Map<string, { defId: string; readyIn: number; x: number; z: number }>;
+  equipped: string;
+  trapsAvailable: number;
+  equippedEggUid: string;
+}
+
+interface TrapLike {
+  x: number;
+  z: number;
+  ownerId: string;
+  placedAt: number;
 }
 
 interface EggLike {
@@ -124,6 +142,12 @@ function eggs(room: Room) {
 function guardian(room: Room) {
   return [...(room.state as { guardians: Map<string, GuardianLike> }).guardians.values()][0];
 }
+function isNight(room: Room) {
+  return (room.state as { isNight: boolean }).isNight;
+}
+function traps(room: Room) {
+  return (room.state as { traps: Map<string, TrapLike> }).traps;
+}
 
 /** Waits until `cond` holds (polling), up to `ms`. Returns whether it held. */
 async function until(cond: () => boolean, ms: number) {
@@ -133,6 +157,11 @@ async function until(cond: () => boolean, ms: number) {
     await sleep(50);
   }
   return cond();
+}
+
+/** Corridor entry is blocked server-side during night; wait it out before anything that needs to walk in. */
+async function waitForDay(room: Room) {
+  if (isNight(room)) await until(() => !isNight(room), 50_000);
 }
 
 /** Sends DevSpeed until walk speed is fast enough to outrun the forest guardian (or resets to 0). */
@@ -149,17 +178,27 @@ async function penChecks(bot: Bot, results: [string, boolean][]) {
   await until(() => !!bot.inventory && bot.inventory.eggs.length === P().eggCount, 2000);
   results.push([`inventory lists backpack eggs (${bot.inventory?.eggs.length} egg, ${bot.inventory?.slots} slots)`, !!bot.inventory && bot.inventory.eggs.length >= 1 && bot.inventory.slots === 4]);
 
+  // Placing is now equip (from the backpack) + use (F) — no more aimed x/z or index.
+  const eggUid0 = bot.inventory!.eggs[0].uid;
+  room.send(MSG.EquipTool, { tool: "egg", eggUid: eggUid0 });
+  await until(() => P().equipped === "egg" && P().equippedEggUid === eggUid0, 500);
+  results.push([`equip a backpack egg`, P().equipped === "egg"]);
+
   const notes0 = bot.notes.length;
-  room.send(MSG.Plant, { x: 0, z: 0 }); // the corridor mouth: not my pen
+  room.send(MSG.Plant); // still standing outside the pen (at spawn)
   await until(() => bot.notes.length > notes0, 1000);
-  results.push([`planting outside my pen refused ("${bot.notes[notes0]?.text}")`, P().penEggs.size === 0]);
+  results.push([`placing outside my pen refused ("${bot.notes[notes0]?.text}")`, P().penEggs.size === 0 && P().equipped === "egg"]);
 
   const eggsBefore = P().eggCount;
-  room.send(MSG.Plant, {});
+  const plot = basePlot(P().baseIndex);
+  await walkTo(bot, plot.cx, 0, plot.cz);
+  room.send(MSG.Plant);
   await until(() => P().penEggs.size === 1, 1500);
   const planted = [...P().penEggs.values()][0];
-  const base = basePlot(P().baseIndex);
-  results.push([`plant egg in my pen (${planted?.defId}, ready in ${planted?.readyIn}s, backpack ${eggsBefore} -> ${P().eggCount})`, !!planted && planted.readyIn > 0 && P().eggCount === eggsBefore - 1 && Math.abs(planted.x - base.cx) < 10 && Math.abs(planted.z - base.cz) < 11]);
+  results.push([
+    `place the equipped egg in my pen (${planted?.defId}, ready in ${planted?.readyIn}s, backpack ${eggsBefore} -> ${P().eggCount})`,
+    !!planted && planted.readyIn > 0 && P().eggCount === eggsBefore - 1 && P().equipped === "" && Math.abs(planted.x - plot.cx) < 10 && Math.abs(planted.z - plot.cz) < 11,
+  ]);
 
   const [eggUid] = [...P().penEggs.keys()];
   const notes1 = bot.notes.length;
@@ -235,6 +274,22 @@ async function progressChecks(bot: Bot, results: [string, boolean][]) {
   await until(() => P().trail === "grey", 1000);
   results.push([`buy + equip Grey Trail at the Trails Shop`, P().trail === "grey" && inv().trailsOwned.includes("grey")]);
 
+  // Free chest: claim once (new profile, so it starts ready), then refused again until the cooldown passes.
+  // Read the reward off the notify text (not a money diff) so the pen's own $/s ticks in the background can't confound it.
+  const chest = useSpot(HUB_BUILDINGS.chest);
+  await walkTo(bot, chest.x, 0, chest.z);
+  const chestNotes0 = bot.notes.length;
+  room.send(MSG.ClaimChest);
+  await until(() => bot.notes.length > chestNotes0, 1500);
+  const chestNote = bot.notes[chestNotes0]?.text ?? "";
+  const gained = Number(chestNote.match(/\+\$(\d+)/)?.[1]);
+  results.push([`claim the Free Chest ("${chestNote}")`, gained >= CHEST.moneyMin && gained <= CHEST.moneyMax]);
+
+  const chestNotes1 = bot.notes.length;
+  room.send(MSG.ClaimChest);
+  await sleep(300);
+  results.push([`Free Chest refuses a second claim before its cooldown`, bot.notes.length === chestNotes1]);
+
   // Fuse: 3 Chicks -> 1 heavier Chick.
   const petsBefore = inv().pets.length;
   for (let i = 0; i < 3; i++) room.send(MSG.DevPet, "forest_chick");
@@ -257,14 +312,15 @@ async function progressChecks(bot: Bot, results: [string, boolean][]) {
   const got = P().money - m2;
   results.push([`sell it at the SELL stall for $${Math.round(got)} (= $/s × ${SELL_MULT})`, inv().pets.length === petsBefore && got >= fused.income * SELL_MULT]);
 
-  // Shop with Gems.
+  // Shop with Gems. (Baseline off whatever we're holding — the chest above may have thrown in a random Gems bonus.)
+  const gems0 = inv().gems;
   room.send(MSG.DevGems);
-  await until(() => inv().gems >= 100, 1000);
+  await until(() => inv().gems >= gems0 + 100, 1000);
   const eggs0 = P().eggCount;
   const bundle = FEATURED.bundles[0];
   room.send(MSG.ShopBuy, { item: "featured", count: bundle.count });
   await until(() => P().eggCount === eggs0 + bundle.count, 1000);
-  results.push([`buy a Featured egg for ${bundle.gems} gems (gems ${inv().gems}, backpack ${eggs0} -> ${P().eggCount})`, P().eggCount === eggs0 + bundle.count && inv().gems === 100 - bundle.gems]);
+  results.push([`buy a Featured egg for ${bundle.gems} gems (gems ${inv().gems}, backpack ${eggs0} -> ${P().eggCount})`, P().eggCount === eggs0 + bundle.count && inv().gems === gems0 + 100 - bundle.gems]);
   room.send(MSG.ShopBuy, { item: "boost10" });
   await until(() => inv().boostLeft > 0, 1000);
   results.push([`x2 Speed boost active (${inv().boostLeft}s left)`, inv().boostLeft > 590]);
@@ -289,8 +345,13 @@ async function progressChecks(bot: Bot, results: [string, boolean][]) {
 async function heistChecks(bot: Bot, results: [string, boolean][]) {
   const room = bot.room;
   const G = () => guardian(room);
+  // Biomes vary in length; derive waypoints from the real config instead of numbers baked in for the old fixed size.
+  const forestHome = GUARDIANS.find((g) => g.biome === "forest")!.home;
+  const lakeStartZ = biomeStartZ(BIOMES.findIndex((b) => b.id === "lake"));
+  // Every biome has its own 6-nest guardian now; this suite only drives the Forest one, so scope checks to its nests (0-5).
+  const forestEggs = () => [...eggs(room).values()].filter((e) => e.nest < 6);
 
-  results.push([`6 eggs in nests, guardian asleep`, eggs(room).size === 6 && [...eggs(room).values()].every((e) => e.state === EggStatus.InNest) && G().mode === GuardianMode.Sleep]);
+  results.push([`6 eggs in Forest nests, guardian asleep`, forestEggs().length === 6 && forestEggs().every((e) => e.state === EggStatus.InNest) && G().mode === GuardianMode.Sleep]);
 
   // Too far away -> refused.
   const [farId] = [...eggs(room).keys()];
@@ -315,7 +376,7 @@ async function heistChecks(bot: Bot, results: [string, boolean][]) {
   // --- A: steal, outrun the guardian, secure at the safe zone.
   await setFast(bot, true);
   await walkTo(bot, 0, 0, -10); // through the corridor mouth, not the hub's front wall
-  await walkTo(bot, 0, 0, 90);
+  await walkTo(bot, 0, 0, forestHome.z);
   const idA = await stealNearest();
   results.push([`steal egg ${idA} (carrying=${me(room).carrying})`, me(room).carrying === idA && eggs(room).get(idA)?.state === EggStatus.Carried]);
   await until(() => G().mode === GuardianMode.Alert, 1000);
@@ -330,7 +391,7 @@ async function heistChecks(bot: Bot, results: [string, boolean][]) {
   results.push([`guardian gives up and heads home`, G().mode === GuardianMode.Return || G().mode === GuardianMode.Sleep]);
 
   // --- B: caught inside the forest -> the guardian carries the egg back to its nest.
-  await walkTo(bot, 0, 0, 90);
+  await walkTo(bot, 0, 0, forestHome.z);
   await until(() => G().mode === GuardianMode.Sleep, 20000);
   const idB = await stealNearest();
   await setFast(bot, false);
@@ -349,12 +410,12 @@ async function heistChecks(bot: Bot, results: [string, boolean][]) {
   // Run up the side of the corridor, away from the guardian's sleeping spot in the middle.
   const side = me(room).x < 0 ? -26 : 26;
   await walkTo(bot, side, 0, me(room).z);
-  await walkTo(bot, side, 0, 215);
+  await walkTo(bot, side, 0, lakeStartZ + 20);
   await setFast(bot, false);
   const caughtC = await until(() => bot.knocks.length === 2, 15000);
   await sleep(EGG_RULES.stunSec * 1000 + 300); // wait out the stun (stunned players can't grab eggs)
   const eC = eggs(room).get(idC);
-  results.push([`caught in the Lake -> egg stays loose there (state ${eC?.state})`, caughtC && eC?.state === EggStatus.Loose && eC.z > 200]);
+  results.push([`caught in the Lake -> egg stays loose there (state ${eC?.state})`, caughtC && eC?.state === EggStatus.Loose && eC.z > lakeStartZ]);
   results.push([`guardian leaves it and returns home (mode ${G().mode})`, G().mode === GuardianMode.Return || G().mode === GuardianMode.Sleep]);
 
   // --- D: picking up the loose egg makes its guardian chase again.
@@ -372,6 +433,123 @@ async function heistChecks(bot: Bot, results: [string, boolean][]) {
   await walkTo(bot, me(room).x, 0, SAFE_ZONE_Z - 4);
   await setFast(bot, false);
   await walkTo(bot, basePlot(me(room).baseIndex).spawn.x, 0, basePlot(me(room).baseIndex).spawn.z);
+}
+
+/** Bat hit: swinging at a nearby carrier (outside the safe zone) makes them drop their egg and knocks them back. */
+async function pvpChecks(a: Bot, b: Bot, results: [string, boolean][]) {
+  const roomA = a.room;
+  const roomB = b.room;
+  const nest = NESTS.find((n) => n.guardian === "forest_hen")!;
+
+  // B waits right next to the nest so it can swing the instant A steals.
+  await setFast(b, true);
+  await walkTo(b, nest.x + 2, 0, nest.z);
+  await setFast(b, false);
+
+  // A grabs the egg at that nest, right next to B.
+  await setFast(a, true);
+  await walkTo(a, nest.x, 0, nest.z);
+  const nearId = [...eggs(roomA).entries()].find(([, e]) => Math.hypot(e.x - nest.x, e.z - nest.z) < 1)?.[0];
+  if (!nearId) {
+    results.push(["PvP setup: found an egg at the test nest", false]);
+    return;
+  }
+  roomA.send(MSG.Steal, nearId);
+  const stole = await until(() => me(roomA).carrying === nearId, 1000);
+  results.push([`PvP setup: A steals the egg next to B`, stole]);
+
+  // B equips the bat first: swinging bare-handed is refused server-side.
+  roomB.send(MSG.EquipTool, { tool: "bat" });
+  await until(() => me(roomB).equipped === "bat", 500);
+  results.push([`equip the bat`, me(roomB).equipped === "bat"]);
+
+  // B faces A exactly (a Move message can set ry without needing to walk) and swings.
+  const posA = me(roomA);
+  const posB = me(roomB);
+  roomB.send(MSG.Move, { x: posB.x, y: 0, z: posB.z, ry: Math.atan2(posA.x - posB.x, posA.z - posB.z), anim: Anim.Idle } satisfies MoveMsg);
+  await until(() => Math.abs(me(roomB).ry - Math.atan2(posA.x - posB.x, posA.z - posB.z)) < 0.05, 500);
+  // A may already have prior knocks from the guardian earlier in heistChecks — track the baseline, don't just check > 0.
+  const knocksBase = a.knocks.length;
+  roomB.send(MSG.BatHit);
+  // The Knock message and the egg's schema patch travel separately; wait for both to land.
+  await until(() => a.knocks.length > knocksBase && eggs(roomA).get(nearId)?.state === EggStatus.Loose, 1000);
+  const hit = a.knocks[a.knocks.length - 1];
+  const eggAfter = eggs(roomA).get(nearId);
+  results.push([
+    `bat hit: carrier drops the egg (state ${eggAfter?.state}, by "${hit?.by}", droppedEgg ${hit?.droppedEgg})`,
+    !me(roomA).carrying && eggAfter?.state === EggStatus.Loose && hit?.by === "Check2" && hit?.kind === "bat" && hit?.droppedEgg === true,
+  ]);
+
+  // Clean up: wait out A's stun, then let the guardian fetch the loose egg home before the next checks run.
+  await sleep(PVP.stunSec * 1000 + 300);
+  await until(() => eggs(roomA).get(nearId)?.state === EggStatus.InNest, 25000);
+
+  // A is now empty-handed (race-to-the-egg case): the bat should still work on a non-carrier, just without claiming an egg dropped.
+  await sleep(PVP.cooldownSec * 1000); // B's bat cooldown from the first swing
+  const knocksBase2 = a.knocks.length;
+  roomB.send(MSG.BatHit);
+  await until(() => a.knocks.length > knocksBase2, 1000);
+  const hit2 = a.knocks[a.knocks.length - 1];
+  results.push([
+    `bat hit works on a non-carrier too (by "${hit2?.by}", droppedEgg ${hit2?.droppedEgg})`,
+    !me(roomA).carrying && hit2?.kind === "bat" && hit2?.by === "Check2" && !hit2?.droppedEgg,
+  ]);
+
+  await sleep(PVP.stunSec * 1000 + 300); // let A's stun from this second hit pass before later checks move it around
+  roomB.send(MSG.EquipTool, { tool: "" });
+}
+
+/** Traps: place one outside the safe zone (owner is immune), another player stepping on it gets caught; refused inside the safe zone. */
+async function trapChecks(a: Bot, b: Bot, results: [string, boolean][]) {
+  const roomA = a.room;
+  const roomB = b.room;
+
+  roomA.send(MSG.EquipTool, { tool: "trap" });
+  await until(() => me(roomA).equipped === "trap", 500);
+  results.push([`equip the trap`, me(roomA).equipped === "trap"]);
+
+  const trapsBefore = me(roomA).trapsAvailable;
+  const spot = { x: me(roomA).x, z: me(roomA).z };
+  roomA.send(MSG.PlaceTrap);
+  await until(() => traps(roomA).size > 0, 1000);
+  results.push([
+    `place a trap in the Forest (charges ${trapsBefore} -> ${me(roomA).trapsAvailable})`,
+    traps(roomA).size === 1 && me(roomA).trapsAvailable === trapsBefore - 1,
+  ]);
+
+  // Standing right where it placed its own trap doesn't trigger it.
+  await sleep(300);
+  results.push([`owner standing on their own trap doesn't trigger it`, traps(roomA).size === 1]);
+
+  // B walks onto it and gets caught.
+  await setFast(b, true);
+  const knocksBase = b.knocks.length;
+  await walkTo(b, spot.x, 0, spot.z);
+  await until(() => b.knocks.length > knocksBase, 2000);
+  const hit = b.knocks[b.knocks.length - 1];
+  // B was never carrying an egg here — the trap still catches you, it just shouldn't claim you dropped one.
+  results.push([`step on Check1's trap (kind "${hit?.kind}", by "${hit?.by}", droppedEgg ${hit?.droppedEgg})`, hit?.kind === "trap" && hit?.by === "Check1" && !hit?.droppedEgg]);
+  results.push([`triggered trap is removed from the world`, traps(roomA).size === 0]);
+
+  // Cleanup, then: refused inside the safe zone.
+  await sleep(TRAP.stunSec * 1000 + 300);
+  await walkTo(b, spot.x, 0, SAFE_ZONE_Z - 4);
+  await setFast(b, false);
+
+  await setFast(a, true);
+  await walkTo(a, spot.x, 0, SAFE_ZONE_Z - 6);
+  await setFast(a, false);
+  const trapsBefore2 = me(roomA).trapsAvailable;
+  const notes0 = a.notes.length;
+  roomA.send(MSG.PlaceTrap);
+  await until(() => a.notes.length > notes0, 800);
+  results.push([
+    `trap refused in the safe zone ("${a.notes[notes0]?.text}")`,
+    me(roomA).trapsAvailable === trapsBefore2 && traps(roomA).size === 0,
+  ]);
+
+  roomA.send(MSG.EquipTool, { tool: "" });
+  await walkTo(a, basePlot(me(roomA).baseIndex).spawn.x, 0, basePlot(me(roomA).baseIndex).spawn.z);
 }
 
 /** Walks a bot to a point at a legal speed (20 updates/s), like a real client would. */
@@ -494,7 +672,10 @@ async function runChecks() {
 
   // --- Phase 3: stealing and the guardian (skip with NO_HEIST=1)
   if (!process.env.NO_HEIST) {
+    await waitForDay(a.room); // night seals off the corridor; don't fight the lockdown
     await heistChecks(a, results);
+    await pvpChecks(a, b, results);
+    await trapChecks(a, b, results);
     await penChecks(a, results);
     await progressChecks(a, results);
   }

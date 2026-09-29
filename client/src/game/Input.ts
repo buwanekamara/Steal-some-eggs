@@ -86,6 +86,14 @@ export class Input {
     jump.addEventListener("touchend", () => (this.touchJump = false));
     this.ui.appendChild(jump);
 
+    const bat = el("button", "bat-btn");
+    bat.innerHTML = "🏏";
+    bat.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      this.listeners.forEach((l) => l("KeyF"));
+    });
+    this.ui.appendChild(bat);
+
     const R = 60;
     addEventListener(
       "touchstart",

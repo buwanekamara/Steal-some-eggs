@@ -23,7 +23,7 @@ export const MSG = {
   Notify: "notify",
 
   // ---- pen / pets (Phase 4)
-  /** client → server: plant a backpack egg in my pen. payload: PlantMsg */
+  /** client → server: place the egg I have equipped, at my current spot (must be in my own pen). */
   Plant: "plant",
   /** client → server: hatch a ready egg in my pen. payload: pen egg uid */
   Hatch: "hatch",
@@ -64,6 +64,22 @@ export const MSG = {
   DevMoney: "devMoney",
   DevGems: "devGems",
   DevPet: "devPet",
+
+  // ---- world events (Phase 6)
+  /** client → server: claim the potion pickup (must be standing at its spot while it's available). */
+  ClaimPotion: "claimPotion",
+
+  // ---- PvP and social (Phase 7)
+  /** client → server: swing the bat. The server picks the nearest player roughly in front of you, in range. */
+  BatHit: "batHit",
+  /** client → server: claim the free chest (must be standing at its spot, off cooldown). */
+  ClaimChest: "claimChest",
+  /** client → server: claim my pending offline earnings (shown as a banner after joining). */
+  ClaimOffline: "claimOffline",
+  /** client → server: hold "" / "bat" / "trap" / "egg" in my hand (always allowed, even in the safe zone). payload: EquipMsg */
+  EquipTool: "equipTool",
+  /** client → server: drop a trap at my feet (must have the trap equipped, off cooldown, outside the safe zone). */
+  PlaceTrap: "placeTrap",
 } as const;
 
 export interface ShopBuyMsg {
@@ -72,15 +88,14 @@ export interface ShopBuyMsg {
   count?: number;
 }
 
-export interface PlantMsg {
-  /** Index into my backpack eggs (defaults to the first). */
-  index?: number;
-  /** Where to plant (must be inside my pen); omitted = pick a free spot. */
-  x?: number;
-  z?: number;
+export interface EquipMsg {
+  tool: "" | "bat" | "trap" | "egg";
+  /** Required when tool is "egg": which backpack egg to hold. */
+  eggUid?: string;
 }
 
 export interface InvEgg {
+  uid: string;
   defId: string;
   size: number;
 }
@@ -107,6 +122,8 @@ export interface InventoryMsg {
   trailsOwned: string[];
   /** Seconds left on the x2 Speed boost (0 = none). */
   boostLeft: number;
+  /** Seconds until the free chest is claimable again (0 = ready now). */
+  chestReadyIn: number;
 }
 
 export interface HatchedMsg {
@@ -141,6 +158,12 @@ export interface KnockMsg {
   vy: number;
   vz: number;
   stunMs: number;
+  /** Name of the player who hit you with a bat or whose trap caught you (absent = a guardian caught you). */
+  by?: string;
+  /** What caused it, when `by` is set (bat swing vs. a stepped-on trap). */
+  kind?: "bat" | "trap";
+  /** Whether you were actually carrying an egg that got dropped (you can get bapped/trapped empty-handed too). */
+  droppedEgg?: boolean;
 }
 
 export interface SecuredMsg {

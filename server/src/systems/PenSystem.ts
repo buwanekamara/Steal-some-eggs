@@ -10,11 +10,11 @@ import {
   PET_BY_ID,
   SELL_MULT,
   USE_RANGE,
+  WORLD_EVENTS,
   basePlot,
   penLevel,
   useSpot,
   inPen,
-  penBounds,
   petIncome,
   rollMutation,
   rollPet,
@@ -23,8 +23,8 @@ import {
   type HatchedMsg,
   type InvPet,
   formatShort,
+  newUid,
   type InventoryMsg,
-  type PlantMsg,
 } from "@egg/shared";
 import type { OwnedPet, PenEgg, Profile } from "../persistence/ProfileStore.ts";
 import { PenEggState, PenPetState, type PlayerState } from "../schema/GameState.ts";
@@ -43,7 +43,6 @@ export interface Owner {
   profile: Profile;
 }
 
-const uid = (prefix: string) => `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
 /**
  * Each player's pen: planted eggs grow (wall-clock, so also while offline), hatch into pets,
@@ -54,11 +53,28 @@ const uid = (prefix: string) => `${prefix}${Date.now().toString(36)}${Math.rando
  */
 export class PenSystem {
   private owners = new Map<string, Owner>();
+  /** Whether it's currently night (eggs grow WORLD_EVENTS.nightGrowMult times faster). */
+  private nightActive = false;
 
   constructor(
     private hooks: PenHooks,
     private now: () => number = Date.now,
   ) {}
+
+  /** Night just started or ended: rescale every growing egg's remaining time so it keeps a consistent finish time. */
+  setNight(active: boolean) {
+    if (active === this.nightActive) return;
+    this.nightActive = active;
+    const now = this.now();
+    // Starting night compresses remaining time by nightGrowMult; ending it restores the normal pace.
+    const factor = active ? 1 / WORLD_EVENTS.nightGrowMult : WORLD_EVENTS.nightGrowMult;
+    for (const { profile } of this.owners.values()) {
+      for (const egg of profile.penEggs) {
+        const remaining = egg.readyAt - now;
+        if (remaining > 0) egg.readyAt = now + remaining * factor;
+      }
+    }
+  }
 
   /** Player joined: mirror their saved pen into the synced state. */
   attach(sessionId: string, p: PlayerState, profile: Profile) {
@@ -99,39 +115,44 @@ export class PenSystem {
 
   // ------------------------------------------------------------------ actions (all validated)
 
-  plant(sessionId: string, msg: PlantMsg | undefined) {
+  /** Places the egg you have equipped, at your current spot in your own pen. */
+  plant(sessionId: string) {
     const o = this.owners.get(sessionId);
     if (!o) return;
     const { p, profile } = o;
-    if (!profile.eggs.length) return this.hooks.notify(sessionId, "No eggs to plant — go steal one!", "bad");
+    if (p.equipped !== "egg" || !p.equippedEggUid) return;
     if (this.used(profile) >= profile.penSlots) return this.hooks.notify(sessionId, "Your pen is full! Buy a slot or take a pet out.", "bad");
-    const index = Number.isInteger(msg?.index) && msg!.index! >= 0 && msg!.index! < profile.eggs.length ? msg!.index! : 0;
+    if (!inPen(p.baseIndex, p.x, p.z, PEN.inset)) return this.hooks.notify(sessionId, "Go to your pen to place it.", "bad");
 
-    const plot = basePlot(p.baseIndex);
-    let spot: { x: number; z: number } | null = null;
-    if (typeof msg?.x === "number" && typeof msg?.z === "number" && Number.isFinite(msg.x) && Number.isFinite(msg.z)) {
-      if (!inPen(p.baseIndex, msg.x, msg.z, PEN.inset)) return this.hooks.notify(sessionId, "Plant it inside your own pen.", "bad");
-      if (!this.spotFree(profile, msg.x - plot.cx, msg.z - plot.cz)) return this.hooks.notify(sessionId, "Too close to another egg.", "bad");
-      spot = { x: msg.x - plot.cx, z: msg.z - plot.cz };
-    } else {
-      spot = this.findSpot(p, profile);
-      if (!spot) return this.hooks.notify(sessionId, "No free spot in your pen.", "bad");
+    const index = profile.eggs.findIndex((e) => e.uid === p.equippedEggUid);
+    if (index < 0) {
+      p.equipped = "";
+      p.equippedEggUid = "";
+      p.equippedEggDefId = "";
+      return;
     }
+    const plot = basePlot(p.baseIndex);
+    const dx = p.x - plot.cx;
+    const dz = p.z - plot.cz;
+    if (!this.spotFree(profile, dx, dz)) return this.hooks.notify(sessionId, "Too close to another egg.", "bad");
 
     const [owned] = profile.eggs.splice(index, 1);
     const now = this.now();
     const egg: PenEgg = {
-      uid: uid("g"),
+      uid: newUid("g"),
       defId: owned.defId,
       size: owned.size,
-      x: +spot.x.toFixed(2),
-      z: +spot.z.toFixed(2),
+      x: +dx.toFixed(2),
+      z: +dz.toFixed(2),
       plantedAt: now,
-      readyAt: now + HATCH[owned.defId].growSec * 1000,
+      readyAt: now + (HATCH[owned.defId].growSec * 1000) / (this.nightActive ? WORLD_EVENTS.nightGrowMult : 1),
     };
     profile.penEggs.push(egg);
     p.eggCount = profile.eggs.length;
     this.showEgg(p, egg);
+    p.equipped = "";
+    p.equippedEggUid = "";
+    p.equippedEggDefId = "";
     this.changed(sessionId);
   }
 
@@ -148,7 +169,7 @@ export class PenSystem {
     p.penEggs.delete(egg.uid);
     const def = rollPet(egg.defId, Math.random());
     const pet: OwnedPet = {
-      uid: uid("p"),
+      uid: newUid("p"),
       species: def.id,
       weight: rollWeight(def, egg.size, Math.random()),
       mutation: rollMutation(Math.random())?.id ?? "",
@@ -225,7 +246,7 @@ export class PenSystem {
     const o = this.owners.get(sessionId);
     if (!o) return;
     const def = rollEgg("forest", Math.random());
-    o.profile.eggs.push({ defId: def.id, size: +(EGG_SIZE.min + Math.random() * (EGG_SIZE.max - EGG_SIZE.min)).toFixed(2), obtainedAt: this.now() });
+    o.profile.eggs.push({ uid: newUid("e"), defId: def.id, size: +(EGG_SIZE.min + Math.random() * (EGG_SIZE.max - EGG_SIZE.min)).toFixed(2), obtainedAt: this.now() });
     o.p.eggCount = o.profile.eggs.length;
     this.hooks.notify(sessionId, `Dev: ${def.name} added to your backpack`, "info");
     this.changed(sessionId);
@@ -341,7 +362,7 @@ export class PenSystem {
     profile.pets = profile.pets.filter((x) => !gone.has(x.uid));
     for (const uid of gone) p.pets.delete(uid);
     const fused: OwnedPet = {
-      uid: uid("p"),
+      uid: newUid("p"),
       species: pets[0].species,
       weight: +(pets.reduce((a, x) => a + x.weight, 0) * FUSE.weightFactor).toFixed(1),
       mutation,
@@ -371,18 +392,6 @@ export class PenSystem {
     return profile.penEggs.every((e) => Math.hypot(e.x - dx, e.z - dz) >= PEN.eggSpacing);
   }
 
-  /** Random free spot (pen-relative) away from other eggs, or null. */
-  private findSpot(p: PlayerState, profile: Profile): { x: number; z: number } | null {
-    const plot = basePlot(p.baseIndex);
-    const b = penBounds(p.baseIndex, PEN.inset);
-    for (let i = 0; i < 60; i++) {
-      const x = b.x0 + Math.random() * (b.x1 - b.x0) - plot.cx;
-      const z = b.z0 + Math.random() * (b.z1 - b.z0) - plot.cz;
-      if (this.spotFree(profile, x, z)) return { x, z };
-    }
-    return null;
-  }
-
   private invPet(pet: OwnedPet, profile = this.profileOfPet(pet)): InvPet {
     return { uid: pet.uid, species: pet.species, weight: pet.weight, mutation: pet.mutation, income: profile ? this.income(pet, profile) : 0, equipped: pet.equipped };
   }
@@ -402,7 +411,7 @@ export class PenSystem {
     if (!o) return;
     const { profile } = o;
     this.hooks.inventory(sessionId, {
-      eggs: profile.eggs.filter((e) => EGG_BY_ID.has(e.defId)).map((e) => ({ defId: e.defId, size: e.size })),
+      eggs: profile.eggs.filter((e) => EGG_BY_ID.has(e.defId)).map((e) => ({ uid: e.uid, defId: e.defId, size: e.size })),
       pets: profile.pets.map((x) => this.invPet(x, profile)),
       slots: profile.penSlots,
       nextSlotCost: profile.penSlots >= PEN.maxSlots ? 0 : slotCost(profile.penSlots),
@@ -411,6 +420,7 @@ export class PenSystem {
       gems: profile.gems,
       trailsOwned: profile.trailsOwned,
       boostLeft: Math.max(0, Math.ceil((profile.boostUntil - this.now()) / 1000)),
+      chestReadyIn: Math.max(0, Math.ceil((profile.nextChestAt - this.now()) / 1000)),
     });
   }
 }

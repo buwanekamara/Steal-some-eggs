@@ -63,15 +63,69 @@ export function treadmillLevel(level: number): TreadmillLevel {
   return lv[Math.max(0, Math.min(lv.length - 1, level - 1))];
 }
 
-// ---------------------------------------------------------------- world events (effects arrive in Phase 6)
+// ---------------------------------------------------------------- world events
 
 export const WORLD_EVENTS = {
-  /** Seconds between nights. */
+  /** Seconds between the start of one night and the start of the next. */
   nightEverySec: 300,
-  /** Seconds between potion spawns. */
+  /** How long a night lasts: every biome is sealed off and everyone is pulled back to the hub. */
+  nightDurationSec: 20,
+  /** Eggs growing in the pen finish this many times faster while it's night. */
+  nightGrowMult: 30,
+  /** Seconds between potion spawns. Once spawned, it waits at its spot until someone claims it. */
   potionEverySec: 900,
   /** Shifts the potion cycle so it doesn't land on the same moment as a night. */
   potionOffsetSec: 150,
+  /** x2 Speed-gain boost granted by claiming the potion. */
+  potionBoostMin: 5,
+} as const;
+
+// ---------------------------------------------------------------- PvP (bat)
+
+export const PVP = {
+  /** Range a bat swing can reach. */
+  hitRange: 4,
+  /** How wide the frontal swing arc is (degrees each side of where you're facing). */
+  arcDeg: 60,
+  /** Seconds between swings. */
+  cooldownSec: 3,
+  /** Stun after being hit — shorter than a guardian's catch. */
+  stunSec: 1,
+  knockback: { horizontal: 18, up: 12 },
+} as const;
+
+export const TRAP = {
+  /** How many you can have placed before needing to wait for one to recharge. */
+  maxCarried: 3,
+  /** Seconds to regain one trap charge. */
+  rechargeSec: 30,
+  /** How close another player has to step to trigger it. */
+  triggerRadius: 1.6,
+  /** Stun once triggered — shorter than the bat, it's a surprise not a beatdown. */
+  stunSec: 1.5,
+  /** An unset trap disappears on its own after this long. */
+  lifetimeSec: 90,
+} as const;
+
+// ---------------------------------------------------------------- offline earnings and free chest
+
+export const OFFLINE = {
+  /** Fraction of your pen income you keep earning per second while away. */
+  rate: 0.5,
+  /** Longest offline gap that counts. */
+  maxHours: 4,
+  /** Ignore gaps shorter than this (avoid noise from quick reconnects/tab refreshes). */
+  minSec: 60,
+} as const;
+
+export const CHEST = {
+  /** Minutes between claims (per player). */
+  cooldownMin: 20,
+  moneyMin: 100,
+  moneyMax: 400,
+  /** Chance of a small Gems bonus on top of the money. */
+  gemChance: 0.2,
+  gemAmount: 5,
 } as const;
 
 // ---------------------------------------------------------------- persistence

@@ -2,7 +2,6 @@ import * as THREE from "three";
 import {
   BASE,
   BIOMES,
-  BIOME_LENGTH,
   CORRIDOR_END_Z,
   CORRIDOR_HALF_WIDTH,
   HUB,
@@ -15,6 +14,7 @@ import {
   SAFE_ZONE_Z,
   WALL_HEIGHT,
   basePlot,
+  biomeLength,
   biomeStartZ,
   formatShort,
   treadmillLevel,
@@ -87,7 +87,7 @@ export class World {
     const bushes: THREE.Matrix4[] = [];
     const m = (x: number, y: number, z: number, sx: number, sy: number, sz: number, ry = 0) =>
       new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0)), new THREE.Vector3(sx, sy, sz));
-    for (let z = z0 + 12; z < z0 + BIOME_LENGTH - 8; z += 13 + rnd() * 9) {
+    for (let z = z0 + 12; z < z0 + biomeLength(i) - 8; z += 13 + rnd() * 9) {
       for (const side of [-1, 1]) {
         const x = side * (CORRIDOR_HALF_WIDTH - 3 - rnd() * 3);
         const h = 5 + rnd() * 3;
@@ -461,11 +461,17 @@ export class World {
     place("fuseMachine", HUB_BUILDINGS.fuse.x, HUB_BUILDINGS.fuse.z, "Fuse Machine", "#2fb5ff");
     place("trailsShop", HUB_BUILDINGS.trails.x, HUB_BUILDINGS.trails.z, "TRAILS SHOP", "#ffd21f");
     place("leaderboard", HUB_BUILDINGS.leaderboard.x, HUB_BUILDINGS.leaderboard.z, "MOST MONEY/s", "#7dff4a");
+    place("chest", HUB_BUILDINGS.chest.x, HUB_BUILDINGS.chest.z, "FREE CHEST", "#ffb020");
+    this.leaderboardLabel = new TextLabel([{ text: "…", color: "#ffffff" }], { lineHeight: 1.4 });
+    this.leaderboardLabel.position.set(HUB_BUILDINGS.leaderboard.x, 5.5, HUB_BUILDINGS.leaderboard.z + 0.1);
+    this.scene.add(this.leaderboardLabel);
     // Glowing pads in front of the stalls: stand here to use them (reference: SELL = green circle, TRAILS = yellow).
     for (const [b, color] of [
       [HUB_BUILDINGS.sell, "#4ce11f"],
       [HUB_BUILDINGS.trails, "#ffd21f"],
       [HUB_BUILDINGS.fuse, "#39c6ff"],
+      [HUB_BUILDINGS.potion, "#c04dff"],
+      [HUB_BUILDINGS.chest, "#ffb020"],
     ] as const) {
       const s = useSpot(b);
       const pad = new THREE.Mesh(
@@ -477,6 +483,30 @@ export class World {
       this.scene.add(pad);
       this.pads.push(pad);
     }
+
+    this.potionPickup = this.lib.instance("potionPickup");
+    this.potionPickup.position.set(HUB_BUILDINGS.potion.x, 0, HUB_BUILDINGS.potion.z);
+    this.potionPickup.visible = false;
+    this.scene.add(this.potionPickup);
+    const potionTag = new TextLabel([{ text: HUB_BUILDINGS.potion.label, color: "#c04dff" }], { lineHeight: 2 });
+    potionTag.position.set(HUB_BUILDINGS.potion.x, 9, HUB_BUILDINGS.potion.z);
+    this.scene.add(potionTag);
+  }
+
+  private potionPickup!: THREE.Object3D;
+  private leaderboardLabel!: TextLabel;
+
+  /** Toggles the potion pickup: visible once spawned, hidden after someone claims it. */
+  setPotionAvailable(available: boolean) {
+    this.potionPickup.visible = available;
+  }
+
+  /** Refreshes the "MOST MONEY/s" board with the current top earners (called a few times a second). */
+  setLeaderboard(rows: { name: string; income: number }[]) {
+    const lines = rows.length
+      ? rows.map((r, i) => ({ text: `${i + 1}. ${r.name} — $${formatShort(r.income)}/s`, color: i === 0 ? "#ffd21f" : "#eaffea", size: i === 0 ? 0.85 : 0.72 }))
+      : [{ text: "Nobody yet…", color: "#cccccc", size: 0.72 }];
+    this.leaderboardLabel.setLines(lines);
   }
 
   private buildSafeZone() {
@@ -489,16 +519,44 @@ export class World {
     this.scene.add(text);
   }
 
+  private nightBarrier: THREE.Mesh | null = null;
+  private nightBarrierTag: TextLabel | null = null;
+
+  /** Night: a wall seals the corridor mouth so no biome is reachable until it passes. */
+  setNightBarrier(on: boolean) {
+    if (!this.nightBarrier) {
+      const height = 12;
+      this.nightBarrier = new THREE.Mesh(
+        new THREE.BoxGeometry(CORRIDOR_HALF_WIDTH * 2 + 4, height, 1.5),
+        new THREE.MeshStandardMaterial({ color: "#141a33", roughness: 0.7, transparent: true, opacity: 0.96 }),
+      );
+      this.nightBarrier.position.set(0, height / 2, SAFE_ZONE_Z + 1.2);
+      this.scene.add(this.nightBarrier);
+      this.nightBarrierTag = new TextLabel(
+        [
+          { text: "🌙 NIGHT", color: "#cfe0ff" },
+          { text: "biomes sealed off", color: "#8fa8ff", size: 0.6 },
+        ],
+        { lineHeight: 0.9 },
+      );
+      this.nightBarrierTag.position.set(0, height * 0.65, SAFE_ZONE_Z + 1.1);
+      this.scene.add(this.nightBarrierTag);
+    }
+    this.nightBarrier.visible = on;
+    this.nightBarrierTag!.visible = on;
+  }
+
   // ------------------------------------------------------------------ corridor
 
   private buildCorridor() {
     const width = CORRIDOR_HALF_WIDTH * 2;
     BIOMES.forEach((b, i) => {
       const z0 = biomeStartZ(i);
-      const zc = z0 + BIOME_LENGTH / 2;
-      this.floor(width, BIOME_LENGTH, b.floor, 0, zc);
-      this.wall(BIOME_LENGTH, -CORRIDOR_HALF_WIDTH - 1, zc, true, b.wall, b.wallTop);
-      this.wall(BIOME_LENGTH, CORRIDOR_HALF_WIDTH + 1, zc, true, b.wall, b.wallTop);
+      const len = biomeLength(i);
+      const zc = z0 + len / 2;
+      this.floor(width, len, b.floor, 0, zc);
+      this.wall(len, -CORRIDOR_HALF_WIDTH - 1, zc, true, b.wall, b.wallTop);
+      this.wall(len, CORRIDOR_HALF_WIDTH + 1, zc, true, b.wall, b.wallTop);
 
       // Soft-gate sign at the start of every biome after the first.
       if (i > 0) {

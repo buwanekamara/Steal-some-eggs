@@ -16,6 +16,7 @@ import {
   USE_RANGE,
   basePlot,
   formatShort,
+  newUid,
   petIncome,
   treadmillLevel,
   useSpot,
@@ -99,6 +100,16 @@ export class ProgressSystem {
     this.pens.refresh(sessionId);
   }
 
+  // ------------------------------------------------------------------ world events
+
+  /** Grants a temporary x2 Speed-gain boost free of Gems (e.g. from the potion pickup), stacking onto any boost already running. */
+  grantSpeedBoost(sessionId: string, minutes: number) {
+    const o = this.pens.owner(sessionId);
+    if (!o) return;
+    o.profile.boostUntil = Math.max(o.profile.boostUntil, this.now()) + minutes * 60_000;
+    this.pens.changed(sessionId);
+  }
+
   // ------------------------------------------------------------------ Shop (Gems)
 
   shopBuy(sessionId: string, msg: ShopBuyMsg | undefined) {
@@ -114,7 +125,7 @@ export class ProgressSystem {
       profile.gems -= bundle.gems;
       const def = EGG_BY_ID.get(FEATURED.eggId)!;
       for (let i = 0; i < bundle.count; i++) {
-        profile.eggs.push({ defId: def.id, size: +(EGG_SIZE.min + Math.random() * (EGG_SIZE.max - EGG_SIZE.min)).toFixed(2), obtainedAt: this.now() });
+        profile.eggs.push({ uid: newUid("e"), defId: def.id, size: +(EGG_SIZE.min + Math.random() * (EGG_SIZE.max - EGG_SIZE.min)).toFixed(2), obtainedAt: this.now() });
       }
       p.eggCount = profile.eggs.length;
       this.hooks.notify(sessionId, `${bundle.count}× ${def.name} added to your backpack!`, "good");

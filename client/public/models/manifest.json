@@ -57,6 +57,13 @@
     "offsetY": 0,
     "note": "Trails Shop stall (yellow/white awning)."
   },
+  "potionPickup": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Potion pickup: a glowing bottle/vial on a small pedestal, about 1.5 units tall. Spawns once per WORLD_EVENTS.potionEverySec and waits here until claimed."
+  },
   "leaderboard": {
     "file": null,
     "scale": 1,
@@ -64,12 +71,47 @@
     "offsetY": 0,
     "note": "Most Money/s board frame."
   },
+  "chest": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Free Chest stall: a treasure chest on a small stand."
+  },
+  "bat": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Baseball bat, held in the player's hand. Grip near the origin, barrel pointing +Y."
+  },
+  "trap": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Bear trap, both as the held item and the one placed on the ground."
+  },
   "guardian_forest": {
     "file": null,
     "scale": 1,
     "rotationY": 0,
     "offsetY": 0,
     "note": "Forest guardian (Broody Hen), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_lake": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Lake guardian (Mother Swan), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_desert": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Desert guardian (Scorpion Queen), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
   },
   "nest": {
     "file": null,
@@ -98,6 +140,48 @@
     "rotationY": 0,
     "offsetY": 0,
     "note": "Acorn Egg (Rare). 1 unit tall at scale 1, bottom at y = 0."
+  },
+  "egg_lake_pebble": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Pebble Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_lake_reed": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Reed Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0."
+  },
+  "egg_lake_pearl": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Pearl Egg (Rare). 1 unit tall at scale 1, bottom at y = 0."
+  },
+  "egg_desert_sand": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Sand Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_desert_cactus": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Cactus Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0."
+  },
+  "egg_desert_scarab": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Scarab Egg (Rare). 1 unit tall at scale 1, bottom at y = 0."
   },
   "pet_forest_chick": {
     "file": null,
@@ -155,6 +239,118 @@
     "offsetY": 0,
     "note": "Forest Spirit (Mythic). About 4.5 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
   },
+  "pet_lake_duckling": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Duckling (Common). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_lake_otter": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Otter (Common). About 1.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_lake_turtle": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Turtle (Uncommon). About 1.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_lake_frog": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Frog (Uncommon). About 1.3 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_lake_heron": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Heron (Rare). About 3.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_lake_beaver": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Beaver (Epic). About 2.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_lake_swan": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Swan (Legendary). About 3.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_lake_leviathan": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Lake Leviathan (Mythic). About 5.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_desert_scorpling": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Scorpling (Common). About 1.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_desert_sandlizard": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Sand Lizard (Common). About 1.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_desert_roadrunner": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Roadrunner (Uncommon). About 1.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_desert_camel": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Camel (Uncommon). About 3.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_desert_fennec": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Fennec Fox (Rare). About 2.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_desert_vulture": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Vulture (Epic). About 3.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_desert_sandwyrm": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Sand Wyrm (Legendary). About 4.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_desert_goldscarab": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Golden Scarab (Mythic). About 3.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
   "egg_limited_nugget": {
     "file": null,
     "scale": 1,
@@ -189,5 +385,761 @@
     "rotationY": 0,
     "offsetY": 0,
     "note": "Nugget King (Mythic, limited). About 5 units tall at its base weight, faces +Z. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1) animate automatically."
+  },
+  "guardian_jungle": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Jungle guardian (Jaguar Shaman), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_snow": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Snow guardian (Frost Yeti), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_volcano": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Volcano guardian (Magma Golem), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_abyss": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Abyss guardian (Abyss Kraken), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_prehistoric": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Prehistoric guardian (Tyrant Rex), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_cosmic": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Cosmic guardian (Void Watcher), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_cherry": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Cherry guardian (Blossom Spirit), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_titan": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Titan guardian (Stone Titan), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "guardian_celestial": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Celestial guardian (Seraph Warden), ~5 units tall, faces +Z. Name leg/wing bones LegL1/LegR1/ArmL1/ArmR1 (or Mixamo names) to get the walk animation."
+  },
+  "egg_jungle_vine": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Vine Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_jungle_bamboo": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Bamboo Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_jungle_orchid": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Orchid Egg (Rare). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_snow_frost": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Frost Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_snow_icicle": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Icicle Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_snow_aurora": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Aurora Egg (Rare). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_volcano_ember": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Ember Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_volcano_obsidian": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Obsidian Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_volcano_molten": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Molten Egg (Rare). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_abyss_barnacle": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Barnacle Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_abyss_coral": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Coral Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_abyss_abyssal": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Abyssal Egg (Rare). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_prehistoric_fossil": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Fossil Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_prehistoric_amber": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Amber Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_prehistoric_raptor": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Raptor Egg (Rare). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_cosmic_comet": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Comet Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_cosmic_nebula": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Nebula Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_cosmic_starlight": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Starlight Egg (Rare). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_cherry_petal": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Petal Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_cherry_sakura": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Sakura Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_cherry_koi": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Koi Egg (Rare). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_titan_rubble": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Rubble Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_titan_rune": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Rune Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_titan_idol": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Idol Egg (Rare). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_celestial_halo": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Halo Egg (Common). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_celestial_rift": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Rift Egg (Uncommon). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "egg_celestial_divine": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Divine Egg (Rare). 1 unit tall at scale 1, bottom at y = 0; the game also scales it by the egg's rolled size."
+  },
+  "pet_jungle_parrot": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Parrot (Common). About 1.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_jungle_monkey": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Monkey (Common). About 1.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_jungle_sloth": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Sloth (Uncommon). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_jungle_gorilla": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Gorilla (Uncommon). About 3.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_jungle_jaguarcub": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Jaguar Cub (Rare). About 2.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_jungle_anaconda": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Anaconda (Epic). About 1.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_jungle_orangutan": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Orangutan (Legendary). About 3.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_jungle_emeraldtiger": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Emerald Tiger (Mythic). About 3.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_snow_bunny": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Snow Bunny (Common). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_snow_penguin": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Penguin (Common). About 1.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_snow_arcticfox": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Arctic Fox (Uncommon). About 2.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_snow_owl": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Snowy Owl (Uncommon). About 2.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_snow_reindeer": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Reindeer (Rare). About 3.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_snow_polarbear": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Polar Bear (Epic). About 4.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_snow_icewyvern": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Ice Wyvern (Legendary). About 4.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_snow_glaciertitan": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Glacier Titan (Mythic). About 5.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_volcano_lavanewt": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Lava Newt (Common). About 1.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_volcano_ashrat": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Ash Rat (Common). About 1.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_volcano_emberfox": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Ember Fox (Uncommon). About 2.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_volcano_magmaturtle": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Magma Turtle (Uncommon). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_volcano_firehawk": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Fire Hawk (Rare). About 3.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_volcano_obsidianwolf": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Obsidian Wolf (Epic). About 3.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_volcano_phoenix": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Phoenix (Legendary). About 3.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_volcano_infernotitan": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Inferno Titan (Mythic). About 5.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_abyss_crab": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Crab (Common). About 1.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_abyss_jellyfish": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Jellyfish (Common). About 1.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_abyss_reeffish": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Reef Fish (Uncommon). About 1.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_abyss_octopus": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Octopus (Uncommon). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_abyss_anglerfish": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Anglerfish (Rare). About 1.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_abyss_hammerhead": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Hammerhead (Epic). About 3.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_abyss_eelking": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Eel King (Legendary). About 1.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_abyss_krakenspawn": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Kraken Spawn (Mythic). About 4.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_prehistoric_compy": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Compy (Common). About 1.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_prehistoric_babyraptor": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Baby Raptor (Common). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_prehistoric_ankylosaurus": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Ankylosaurus (Uncommon). About 2.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_prehistoric_gallimimus": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Gallimimus (Uncommon). About 2.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_prehistoric_sabertooth": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Sabertooth (Rare). About 2.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_prehistoric_mammoth": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Woolly Mammoth (Epic). About 4.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_prehistoric_trex": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Tyrannosaurus (Legendary). About 4.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_prehistoric_skeletaltitan": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Skeletal Titan (Mythic). About 5.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cosmic_moonpup": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Moon Pup (Common). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cosmic_starkit": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Star Kit (Common). About 1.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cosmic_voidbat": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Void Bat (Uncommon). About 1.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cosmic_nebulamoth": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Nebula Moth (Uncommon). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cosmic_astrofox": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Astro Fox (Rare). About 2.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cosmic_galaxyserpent": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Galaxy Serpent (Epic). About 1.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cosmic_voidreaper": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Void Reaper (Legendary). About 3.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cosmic_cosmicdragon": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Cosmic Dragon (Mythic). About 5.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cherry_petalsprite": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Petal Sprite (Common). About 1.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cherry_koifish": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Koi Fish (Common). About 1.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cherry_redpanda": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Red Panda (Uncommon). About 1.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cherry_crane": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Crane (Uncommon). About 2.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cherry_tanuki": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Tanuki (Rare). About 2.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cherry_blossomdeer": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Blossom Deer (Epic). About 3.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cherry_sakuradragon": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Sakura Dragon (Legendary). About 4.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_cherry_blossomphoenix": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Blossom Phoenix (Mythic). About 5.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_titan_pebblegolem": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Pebble Golem (Common). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_titan_stoneowl": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Stone Owl (Common). About 2.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_titan_runewolf": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Rune Wolf (Uncommon). About 2.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_titan_moaisprite": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Moai Sprite (Uncommon). About 2.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_titan_bronzehawk": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Bronze Hawk (Rare). About 3.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_titan_titanbull": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Titan Bull (Epic). About 4.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_titan_colossus": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Colossus (Legendary). About 5.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_titan_titanking": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Titan King (Mythic). About 5.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_celestial_cherub": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Cherub (Common). About 1.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_celestial_stardove": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Star Dove (Common). About 1.4 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_celestial_riftfox": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Rift Fox (Uncommon). About 2.2 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_celestial_cometdeer": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Comet Deer (Uncommon). About 3.0 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_celestial_guardianangel": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Guardian Angel (Rare). About 2.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_celestial_seraphhound": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Seraph Hound (Epic). About 3.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_celestial_archangel": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Archangel (Legendary). About 4.8 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
+  },
+  "pet_celestial_dragonking": {
+    "file": null,
+    "scale": 1,
+    "rotationY": 0,
+    "offsetY": 0,
+    "note": "Celestial Dragon King (Mythic). About 5.6 units tall at its base weight, faces +Z. The game scales it by weight. Leg bones LegL1/LegR1 (+ ArmL1/ArmR1 for front legs/wings) animate automatically."
   }
 }

@@ -210,6 +210,37 @@ function leaderboard(): THREE.Object3D {
   return g;
 }
 
+/** Held bat: grip near the origin, barrel extending up — swap for a rigged model later. */
+function bat(): THREE.Object3D {
+  const g = new THREE.Group();
+  const wood = mat("#c9944f", { roughness: 0.55 });
+  const grip = mat("#3a2a1a", { roughness: 0.75 });
+  const barrel = shaded(new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.045, 0.72, 10), wood));
+  barrel.position.y = 0.42;
+  g.add(barrel);
+  const handle = shaded(new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.2, 8), grip));
+  handle.position.y = 0.02;
+  g.add(handle);
+  return g;
+}
+
+/** A small steel-jaw trap, sat flat on the ground. */
+function trap(): THREE.Object3D {
+  const g = new THREE.Group();
+  const metal = mat("#5c6570", { roughness: 0.35, metalness: 0.6 });
+  const tooth = mat("#aab2bc", { roughness: 0.3, metalness: 0.5 });
+  const base = shaded(new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.07, 16), metal));
+  base.position.y = 0.035;
+  g.add(base);
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    const t = box(0.05, 0.16, 0.05, tooth, Math.cos(a) * 0.4, 0.14, Math.sin(a) * 0.4);
+    t.rotation.y = -a;
+    g.add(t);
+  }
+  return g;
+}
+
 function unknown(): THREE.Object3D {
   const g = new THREE.Group();
   g.add(box(1.5, 1.5, 1.5, "#ff2bd6", 0, 0.75, 0));
@@ -442,6 +473,8 @@ export const PLACEHOLDERS: Record<string, () => THREE.Object3D> = {
   trailsShop,
   fuseMachine,
   leaderboard,
+  bat,
+  trap,
 };
 
 export function makePlaceholder(id: string): THREE.Object3D {

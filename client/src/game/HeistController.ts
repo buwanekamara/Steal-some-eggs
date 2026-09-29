@@ -70,6 +70,7 @@ const _v = new THREE.Vector3();
 export class HeistController {
   private eggs = new Map<string, { entity: EggEntity; view: EggView }>();
   private guardians = new Map<string, { entity: Guardian; view: GuardianView }>();
+  private traps = new Map<string, THREE.Object3D>();
   private room!: Room;
   private lastBiome: string | null | undefined = undefined;
   /** My carried egg id (from my PlayerState.carrying). */
@@ -120,11 +121,30 @@ export class HeistController {
       });
     });
 
+    cb.onAdd("traps", (value, key) => {
+      const view = value as { x: number; z: number };
+      const obj = this.ctx.lib.instance("trap");
+      obj.position.set(view.x, 0, view.z);
+      this.ctx.scene.add(obj);
+      this.traps.set(key as string, obj);
+    });
+    cb.onRemove("traps", (_value, key) => {
+      this.traps.get(key as string)?.removeFromParent();
+      this.traps.delete(key as string);
+    });
+
     room.onMessage(MSG.Knock, (m: KnockMsg) => {
       this.ctx.me.knock(m.vx, m.vy, m.vz, m.stunMs);
       this.ctx.shake(1.2);
       sfx.hit();
-      this.ctx.heistHud.toast("You got caught and dropped the egg!", "bad");
+      const eggPart = m.droppedEgg ? " You dropped your egg." : "";
+      const text =
+        m.kind === "trap"
+          ? (m.by ? `Caught in ${m.by}'s trap!` : "Caught in a trap!") + eggPart
+          : m.by
+            ? `${m.by} bapped you with a bat!${eggPart}`
+            : "You got caught and dropped the egg!";
+      this.ctx.heistHud.toast(text, "bad");
     });
     room.onMessage(MSG.Secured, (m: SecuredMsg) => {
       const def = EGG_BY_ID.get(m.defId);
