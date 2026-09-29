@@ -130,6 +130,7 @@ async function join(name: string, profileId: string, roomId?: string): Promise<B
   room.onMessage(MSG.Fused, (m: FusedMsg) => bot.fused.push(m));
   room.send(MSG.Inventory);
   room.onMessage(MSG.Knock, (m: KnockMsg) => bot.knocks.push(m));
+  room.onMessage(MSG.Swing, () => {});
   room.onMessage(MSG.Secured, (m: SecuredMsg) => bot.secured.push(m));
   room.onMessage(MSG.Notify, (m: NotifyMsg) => bot.notes.push(m));
   room.onMessage(MSG.Correct, (m: CorrectMsg) => {
@@ -249,8 +250,16 @@ async function penChecks(bot: Bot, results: [string, boolean][]) {
   room.send(MSG.Hatch, eggUid);
   await until(() => bot.hatched.length === 1, 1500);
   const pet = bot.hatched[0]?.pet;
-  await until(() => P().pets.size === 1 && P().income === pet?.income, 1000); // state patch lands just after the message
-  results.push([`hatch -> ${pet?.species} (${pet?.weight}kg, $${pet?.income}/s${pet?.mutation ? ", " + pet.mutation : ""}, new=${bot.hatched[0]?.isNew})`, !!pet && P().pets.size === 1 && P().penEggs.size === 0 && P().income === pet.income]);
+  // A hatched pet goes to the hotbar (or backpack), not straight into the pen.
+  await until(() => P().penEggs.size === 0 && !!pet && !!bot.inventory?.hotbar.includes(pet.uid), 1000); // state patch lands just after the message
+  results.push([
+    `hatch -> ${pet?.species} (${pet?.weight}kg, ${pet?.income}/s${pet?.mutation ? ", " + pet.mutation : ""}, new=${bot.hatched[0]?.isNew}) lands on the hotbar`,
+    !!pet && P().penEggs.size === 0 && P().pets.size === 0 && P().income === 0 && bot.inventory!.hotbar.includes(pet.uid),
+  ]);
+
+  room.send(MSG.Equip, pet.uid);
+  await until(() => P().pets.size === 1 && P().income === pet.income && !bot.inventory!.hotbar.includes(pet.uid), 1000);
+  results.push([`put it in the pen: it earns ${P().income}/s and leaves the hotbar`, P().pets.size === 1 && P().income === pet.income && !bot.inventory!.hotbar.includes(pet.uid)]);
 
   const m0 = P().money;
   await sleep(2200);
@@ -529,8 +538,9 @@ async function heistChecks(bot: Bot, results: [string, boolean][]) {
   const walkAway = walkTo(bot, me(room).x, 0, 60).catch(() => {});
   const caught = await until(() => bot.knocks.length === 1, 12000);
   await walkAway;
+  await until(() => !me(room).carrying, 1000); // the Knock message beats the state patch that drops the egg
   const eB = eggs(room).get(idB);
-  results.push([`slow thief gets hit inside the forest (knock ${bot.knocks[0] ? Math.round(Math.hypot(bot.knocks[0].vx, bot.knocks[0].vz)) : "-"} u/s)`, caught && !me(room).carrying && !!eB && eB.state !== EggStatus.Carried]);
+  results.push([`slow thief gets hit inside the forest (knock ${bot.knocks[0] ? Math.round(Math.hypot(bot.knocks[0].vx, bot.knocks[0].vz)) : "-"} u/s, carrying "${me(room).carrying}", egg state ${eB?.state})`, caught && !me(room).carrying && !!eB && eB.state !== EggStatus.Carried]);
   const home = await until(() => eggs(room).get(idB)?.state === EggStatus.InNest, 25000);
   results.push([`guardian fetches the egg back to its nest`, home]);
 
@@ -573,12 +583,15 @@ async function pvpChecks(a: Bot, b: Bot, results: [string, boolean][]) {
   const nest = NESTS.find((n) => n.guardian === "forest_hen")!;
 
   // B waits right next to the nest so it can swing the instant A steals.
+  // Both go through the corridor mouth: a straight line from a base can cut through the hub's front wall.
   await setFast(b, true);
+  await walkTo(b, 0, 0, -10);
   await walkTo(b, nest.x + 2, 0, nest.z);
   await setFast(b, false);
 
   // A grabs the egg at that nest, right next to B.
   await setFast(a, true);
+  await walkTo(a, 0, 0, -10);
   await walkTo(a, nest.x, 0, nest.z);
   const nearId = [...eggs(roomA).entries()].find(([, e]) => Math.hypot(e.x - nest.x, e.z - nest.z) < 1)?.[0];
   if (!nearId) {
@@ -624,6 +637,10 @@ async function pvpChecks(a: Bot, b: Bot, results: [string, boolean][]) {
 
   // A is now empty-handed (race-to-the-egg case): the bat should still work on a non-carrier, just without claiming an egg dropped.
   await sleep(PVP.cooldownSec * 1000); // B's bat cooldown from the first swing
+  // The first hit threw A a few meters (the server flies knockback), so B steps back up to A and faces it.
+  const posA2 = me(roomA);
+  await walkTo(b, posA2.x + 2, 0, posA2.z);
+  roomB.send(MSG.Move, { x: posA2.x + 2, y: 0, z: posA2.z, ry: Math.atan2(-2, 0), anim: Anim.Idle } satisfies MoveMsg);
   const knocksBase2 = a.knocks.length;
   roomB.send(MSG.Use, {});
   await until(() => a.knocks.length > knocksBase2, 1000);
@@ -691,7 +708,8 @@ async function trapChecks(a: Bot, b: Bot, results: [string, boolean][]) {
   // B walks onto it and gets caught.
   await setFast(b, true);
   const knocksBase = b.knocks.length;
-  await walkTo(b, 0, 0, 22);
+  // The trap freezes B where it springs (the server holds a caught player still), so B never reaches the exact spot.
+  await walkTo(b, 0, 0, 22).catch(() => {});
   await until(() => b.knocks.length > knocksBase, 2000);
   const hit = b.knocks[b.knocks.length - 1];
   // B isn't carrying an egg here — the trap still catches it, it just shouldn't claim an egg dropped.
@@ -762,7 +780,8 @@ async function walkTo(bot: Bot, x: number, y: number, z: number) {
     if (Math.abs(s.x - x) < 0.02 && Math.abs(s.z - z) < 0.02 && Math.abs(s.y - y) < 0.02) return;
     await sleep(50);
   }
-  throw new Error(`walkTo(${x}, ${y}, ${z}) never confirmed by the server`);
+  const at = me(bot.room);
+  throw new Error(`walkTo(${x}, ${y}, ${z}) never confirmed by the server (server has ${at.x.toFixed(2)}, ${at.y.toFixed(2)}, ${at.z.toFixed(2)}; last knock ${JSON.stringify(bot.knocks.at(-1) ?? null)})`);
 }
 
 /** Holds a position for `ms`, sending the given animation state 20×/s. */
@@ -991,6 +1010,6 @@ async function runChecks() {
 }
 
 runBots().catch((e) => {
-  console.error("[bots] failed:", e.message ?? e);
+  console.error("[bots] failed:", e.stack ?? e);
   process.exit(1);
 });
