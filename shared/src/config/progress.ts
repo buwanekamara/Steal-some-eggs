@@ -169,6 +169,8 @@ export interface ShopItem {
   desc: string;
   icon: string;
   gems: number;
+  /** When set, the item is bought with money instead of gems. */
+  cash?: number;
   /** What it gives. */
   speedBoostMin?: number;
   speed?: number;
@@ -185,9 +187,9 @@ export const SHOP_ITEMS: ShopItem[] = [
   { id: "cash1", tab: "money", title: "Pile of Cash", desc: "$10K, or 10 minutes of your income if that's more.", icon: "💵", gems: 20, money: { flat: 10_000, incomeSeconds: 600 } },
   { id: "cash2", tab: "money", title: "Bag of Cash", desc: "$100K, or 1 hour of your income if that's more.", icon: "💰", gems: 90, money: { flat: 100_000, incomeSeconds: 3_600 } },
   { id: "cash3", tab: "money", title: "Vault of Cash", desc: "$1M, or 8 hours of your income if that's more.", icon: "🏦", gems: 400, money: { flat: 1_000_000, incomeSeconds: 28_800 } },
-  { id: "bat", tab: "gear", title: "Baseball Bat", desc: "Knock an egg out of a thief's hands (or daze a guardian).", icon: "🏏", gems: 25, tool: { kind: "bat", qty: 1 } },
-  { id: "trap3", tab: "gear", title: "Bear Traps x3", desc: "Place in a biome: whoever steps in is stuck and drops their egg.", icon: "🪤", gems: 15, tool: { kind: "trap", qty: 3 } },
-  { id: "trap10", tab: "gear", title: "Bear Traps x10", desc: "A big stack of traps.", icon: "🪤", gems: 40, tool: { kind: "trap", qty: 10 } },
+  { id: "bat", tab: "gear", title: "Sword", desc: "Knock an egg out of a thief's hands (or daze a guardian).", icon: "🗡️", gems: 25, tool: { kind: "bat", qty: 1 } },
+  { id: "trap3", tab: "gear", title: "Bear Traps x3", desc: "Place in a biome: whoever steps in is stuck and drops their egg.", icon: "🪤", gems: 0, cash: 1_000, tool: { kind: "trap", qty: 3 } },
+  { id: "trap10", tab: "gear", title: "Bear Traps x10", desc: "A big stack of traps.", icon: "🪤", gems: 0, cash: 3_000, tool: { kind: "trap", qty: 10 } },
 ];
 
 export const SHOP_BY_ID = new Map(SHOP_ITEMS.map((s) => [s.id, s]));

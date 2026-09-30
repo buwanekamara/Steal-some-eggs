@@ -15,6 +15,7 @@ import {
   TRAP,
   TREADMILL,
   USE_RANGE,
+  MIN_TRAPS_ON_JOIN,
   WORLD_EVENTS,
   basePlot,
   GUARDIANS,
@@ -222,6 +223,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     const now = Date.now();
     const meta: PlayerMeta = { profileId, profile, lastMoveAt: now, lastSaveAt: now, stepAccum: 0, released: false, knockUntil: 0, knockSpeed: 0, knockV: { x: 0, z: 0, y: 0 }, batReadyAt: 0 };
     this.meta.set(client.sessionId, meta);
+    this.topUpTraps(profile, now);
     this.pens.attach(client.sessionId, p, profile);
 
     // Offline earnings: your pen income kept paying out (at a reduced rate) while you were away.
@@ -241,8 +243,12 @@ export class GameRoom extends Room<{ state: GameState }> {
     const p = this.state.players.get(client.sessionId);
     const m = this.meta.get(client.sessionId);
     this.heist.playerLeft(client.sessionId);
-    // Their traps leave with them (unused ones stay safe in the saved inventory).
-    this.state.traps.forEach((t, id) => t.ownerId === client.sessionId && this.state.traps.delete(id));
+    // Their traps leave with them; any that are still set go back into their stack (saved just below).
+    this.state.traps.forEach((t, id) => {
+      if (t.ownerId !== client.sessionId) return;
+      this.state.traps.delete(id);
+      if (m) grantTool(m.profile, "trap", 1, Date.now());
+    });
     if (m && !m.released) {
       await this.saveProfile(client.sessionId);
       activeSessions.delete(m.profileId);
@@ -255,6 +261,17 @@ export class GameRoom extends Room<{ state: GameState }> {
 
   async onDispose() {
     await this.saveAll();
+  }
+
+  /** Every game starts with at least MIN_TRAPS_ON_JOIN bear traps, and one trap stack on the hotbar. */
+  private topUpTraps(profile: Profile, now: number) {
+    const have = profile.tools.filter((t) => t.kind === "trap").reduce((n, t) => n + t.qty, 0);
+    if (have < MIN_TRAPS_ON_JOIN) grantTool(profile, "trap", MIN_TRAPS_ON_JOIN - have, now);
+    const stacks = profile.tools.filter((t) => t.kind === "trap" && t.qty > 0);
+    if (!stacks.length || stacks.some((t) => profile.hotbar.includes(t.uid))) return;
+    // Not on the hotbar: first free slot, or the last slot if it's full (whatever was there just goes back to the backpack).
+    const free = profile.hotbar.indexOf("");
+    profile.hotbar[free >= 0 ? free : profile.hotbar.length - 1] = stacks[0].uid;
   }
 
   // ------------------------------------------------------------------ simulation
@@ -521,7 +538,16 @@ export class GameRoom extends Room<{ state: GameState }> {
     const now = Date.now();
     const gone: string[] = [];
     this.state.traps.forEach((trap, id) => {
-      if (now - trap.placedAt > TRAP.lifetimeSec * 1000) return void gone.push(id);
+      if (now - trap.placedAt > TRAP.lifetimeSec * 1000) {
+        // Nobody stepped in it: it goes back into its owner's stack.
+        gone.push(id);
+        const ownerMeta = this.meta.get(trap.ownerId);
+        if (ownerMeta) {
+          grantTool(ownerMeta.profile, "trap", 1, now);
+          this.pens.changed(trap.ownerId);
+        }
+        return;
+      }
       const owner = this.state.players.get(trap.ownerId);
       let caught = "";
 

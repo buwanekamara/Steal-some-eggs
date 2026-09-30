@@ -115,7 +115,7 @@ export const TRAP = {
   previewDistance: 2.5,
   /** Traps can't be placed right on top of each other. */
   minSpacing: 1.2,
-  /** An unset trap disappears on its own after this long (it isn't refunded). */
+  /** A trap nobody steps in is picked back up after this long (it returns to its owner's stack). */
   lifetimeSec: 90,
   /** How close someone has to step to set it off. */
   triggerRadius: 1.6,

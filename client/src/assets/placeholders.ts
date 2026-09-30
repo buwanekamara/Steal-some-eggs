@@ -122,7 +122,7 @@ const TREADMILL_TIERS: Record<TreadmillTier, { frame: string; accent: string; be
   1: { frame: "#2f6fd6", accent: "#4f95f0", belt: "#2a2d36", glow: "#5fe8ff", loop: false },
   2: { frame: "#c9cdd6", accent: "#3ad16a", belt: "#1d2229", glow: "#7dffa8", loop: false },
   3: { frame: "#f4f7fb", accent: "#2f9bff", belt: "#182430", glow: "#7fd4ff", loop: false },
-  4: { frame: "#f2b632", accent: "#ffdf80", belt: "#15181f", glow: "#39e6ff", loop: true },
+  4: { frame: "#f2c230", accent: "#f39a3a", belt: "#15181f", glow: "#39e6ff", loop: true },
 };
 
 function treadmill(tier: TreadmillTier = 1): THREE.Object3D {
@@ -210,14 +210,14 @@ function treadmill(tier: TreadmillTier = 1): THREE.Object3D {
   }
 
   if (p.loop) {
-    // Tier 4: a tall looping arch of rail over the deck, like the reference gold treadmill.
-    const arch = shaded(new THREE.Mesh(new THREE.TorusGeometry(1.85, 0.17, 10, 36, Math.PI * 1.6), accentMat));
-    arch.rotation.set(0, Math.PI / 2, Math.PI * 0.52);
-    arch.position.set(0, 1.55, -1.45);
-    g.add(arch);
-    const support = shaded(new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 1.9, 8), frameMat));
-    support.position.set(0, 1.2, 0.3);
-    g.add(support);
+    // Tier 4: a big gold hoop standing on the ground around the console end (like the reference gold treadmill).
+    // It lies in the treadmill's length/height plane, so it circles the console without touching the belt or rails.
+    const ring = shaded(new THREE.Mesh(new THREE.TorusGeometry(1.7, 0.09, 10, 48), mat(p.frame, { roughness: 0.3, metalness: 0.3, map: null })));
+    ring.scale.z = 1.3;
+    // Faces along the treadmill (across its width), standing just behind the console.
+    ring.position.set(0, 1.75, 2.85);
+    ring.rotation.x = 0.35; // top leans away from the treadmill
+    g.add(ring);
   }
   return g;
 }

@@ -137,8 +137,13 @@ export class ProgressSystem {
 
     const item = SHOP_BY_ID.get(msg.item);
     if (!item) return;
-    if (profile.gems < item.gems) return this.hooks.notify(sessionId, `You need ${item.gems} 💎.`, "bad");
-    profile.gems -= item.gems;
+    if (item.cash) {
+      if (p.money < item.cash) return this.hooks.notify(sessionId, `You need ${formatShort(item.cash)}.`, "bad");
+      p.money -= item.cash;
+    } else {
+      if (profile.gems < item.gems) return this.hooks.notify(sessionId, `You need ${item.gems} 💎.`, "bad");
+      profile.gems -= item.gems;
+    }
     if (item.speedBoostMin) profile.boostUntil = Math.max(profile.boostUntil, this.now()) + item.speedBoostMin * 60_000;
     if (item.speed) p.speedStat += item.speed;
     if (item.money) p.money += Math.max(item.money.flat, Math.round(p.income * item.money.incomeSeconds));

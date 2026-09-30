@@ -26,3 +26,6 @@ export const STARTER_TOOLS: { kind: ToolKind; qty: number }[] = [
   { kind: "bat", qty: 1 },
   { kind: "trap", qty: 3 },
 ];
+
+/** Every time you start the game you have at least this many bear traps, with a stack on your hotbar. */
+export const MIN_TRAPS_ON_JOIN = 3;

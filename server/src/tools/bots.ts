@@ -735,8 +735,10 @@ async function trapChecks(a: Bot, b: Bot, results: [string, boolean][]) {
   results.push([`last trap used up: its slot empties (x${qty()})`, qty() === 0 && toolSlot(a, "trap") === -1 && me(roomA).equipped === ""]);
 
   // Getting more: bought traps are stored like any new item (first free hotbar slot).
-  roomA.send(MSG.DevGems);
-  await until(() => a.inventory!.gems >= 100, 1000);
+  // Trap packs cost money (not gems), so you can always restock.
+  const cashBefore = me(roomA).money;
+  roomA.send(MSG.DevMoney);
+  await until(() => me(roomA).money >= cashBefore + 1_000_000, 1000);
   roomA.send(MSG.ShopBuy, { item: "trap10" });
   await until(() => qty() === 10, 1000);
   const newSlot = toolSlot(a, "trap");
@@ -971,7 +973,9 @@ async function runChecks() {
   const savedEggs = me(a.room).eggCount;
   const savedPets = me(a.room).pets.size;
   const savedHotbar = a.inventory!.hotbar.join(",");
-  const savedTools = JSON.stringify(a.inventory!.tools);
+  const countOf = (tools: { kind: string; qty: number }[] | undefined, kind: string) => (tools ?? []).filter((t) => t.kind === kind).reduce((n, t) => n + t.qty, 0);
+  const savedBats = countOf(a.inventory!.tools, "bat");
+  const savedTraps = countOf(a.inventory!.tools, "trap");
   const trapsOut = [...traps(b.room).values()].filter((t) => t.ownerId === aId).length;
   await a.room.leave();
   await sleep(300);
@@ -984,8 +988,8 @@ async function runChecks() {
     me(a2.room).speedStat === saved && me(a2.room).eggCount === savedEggs && me(a2.room).pets.size === savedPets,
   ]);
   results.push([
-    `bat, trap stack and hotbar slots saved across rejoin (${a2.inventory?.tools.map((t) => `${t.kind}x${t.qty}`).join(" ")})`,
-    a2.inventory?.hotbar.join(",") === savedHotbar && JSON.stringify(a2.inventory?.tools) === savedTools,
+    `bat, trap stack and hotbar slots saved across rejoin, traps left out refunded (${a2.inventory?.tools.map((t) => `${t.kind}x${t.qty}`).join(" ")} = trap x${savedTraps} + ${trapsOut})`,
+    a2.inventory?.hotbar.join(",") === savedHotbar && countOf(a2.inventory?.tools, "bat") === savedBats && countOf(a2.inventory?.tools, "trap") === savedTraps + trapsOut,
   ]);
 
   // --- Phase 2: same profile in a second tab takes over

@@ -119,7 +119,7 @@ export class Menus {
     // Money ticks every second; only the Trails Shop shows it, so leave it out of the change check elsewhere.
     // The Fuse Machine only cares whether you can afford the fee of the pets you picked.
     const fuseSpecies = this.fuseM.isOpen ? this.data.inv?.pets.find((p) => p.uid === this.fuseSel[0])?.species : undefined;
-    const sig = JSON.stringify({ ...data, money: this.trails.isOpen ? data.money : 0, canFuse: fuseSpecies ? data.money >= fusionFee(fuseSpecies) : null });
+    const sig = JSON.stringify({ ...data, money: this.trails.isOpen ? data.money : 0, canCash: SHOP_ITEMS.map((i) => !!i.cash && data.money >= i.cash), canFuse: fuseSpecies ? data.money >= fusionFee(fuseSpecies) : null });
     const changed = sig !== this.sig;
     this.sig = sig;
     this.data = data;
@@ -190,7 +190,11 @@ export class Menus {
       .map(
         (i) => `<div class="shop-item"><div class="si-icon">${i.icon}</div><div class="si-title">${esc(i.title)}</div>
           <div class="si-desc">${esc(i.desc)}</div>
-          <button class="gem-btn${gems >= i.gems ? "" : " no"}" data-buy="${i.id}">💎 ${i.gems}</button></div>`,
+          ${
+            i.cash
+              ? `<button class="gem-btn${this.data.money >= i.cash ? "" : " no"}" data-buy="${i.id}">💵 ${formatShort(i.cash)}</button>`
+              : `<button class="gem-btn${gems >= i.gems ? "" : " no"}" data-buy="${i.id}">💎 ${i.gems}</button>`
+          }</div>`,
       )
       .join("")}</div>${
       this.shop.tab === "speed" && (this.data.inv?.boostLeft ?? 0) > 0

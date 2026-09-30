@@ -81,7 +81,7 @@
   "bat": {
     "file": null,
     "scale": 1,
-    "rotationY": 0,
+    "rotationY": 90,
     "offsetY": 0,
     "note": "Sword, held in the player's hand. Grip near the origin, blade pointing +Y."
   },
