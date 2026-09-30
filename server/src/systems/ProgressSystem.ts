@@ -202,6 +202,13 @@ export class ProgressSystem {
     this.pens.changed(sessionId);
   }
 
+  devSetGems(sessionId: string, gems: number) {
+    const o = this.pens.owner(sessionId);
+    if (!o) return;
+    o.profile.gems = gems;
+    this.pens.changed(sessionId);
+  }
+
   devGems(sessionId: string) {
     const o = this.pens.owner(sessionId);
     if (!o) return;

@@ -11,6 +11,8 @@ export const MSG = {
   Correct: "correct",
   /** client → server (dev builds only): "up" multiplies your Speed stat, "reset" sets it to 0. */
   DevSpeed: "devSpeed",
+  /** client → server (cheats): set exact values. payload: { speed?: number, money?: number, gems?: number } */
+  DevSet: "devSet",
   /** client → server: steal / pick up this egg (after holding E). payload: egg id */
   Steal: "steal",
   /** client → server: drop the egg I'm carrying. */

@@ -2298,23 +2298,6 @@ body {
   min-height: 1em;
 }
 
-/* dev-only night/day override */
-.dev-night {
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
-  pointer-events: auto;
-  font: 700 14px var(--font);
-  color: #fff;
-  background: #1a2560cc;
-  border: 2px solid #7fa0ffaa;
-  border-radius: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-}
-
 /* biome entry banner */
 .biome-banner {
   position: fixed;
@@ -2348,4 +2331,61 @@ body {
   12% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
   80% { opacity: 1; }
   100% { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+}
+
+/* cheat / debug panel (top-left 🛠️ button) */
+.cheat-panel {
+  position: absolute;
+  top: 66px;
+  left: 14px;
+  width: 300px;
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+.cheat-panel[hidden] {
+  display: none;
+}
+.cheat-panel small {
+  opacity: 0.6;
+  font-weight: 600;
+}
+.ch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 700 14px var(--font);
+}
+.ch-row label {
+  width: 52px;
+}
+.ch-row input {
+  flex: 1;
+  min-width: 0;
+  font: 600 14px var(--font);
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 2px solid #ffffff33;
+  background: #0d0f16;
+  color: #fff;
+  user-select: text;
+}
+.ch-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.cheat-panel button {
+  font: 700 13px var(--font);
+  color: #fff;
+  background: #ffffff1f;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.cheat-panel button:hover {
+  border-color: #ffd21f;
 }

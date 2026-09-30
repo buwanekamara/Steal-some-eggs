@@ -1,4 +1,4 @@
-import { WORLD_EVENTS, biomeAt, formatShort } from "@egg/shared";
+import { CHEATS_ENABLED, WORLD_EVENTS, biomeAt, formatShort } from "@egg/shared";
 import type { GraphicsChoice, Quality, Settings } from "../game/Settings.ts";
 
 export interface PlayerRow {
@@ -16,13 +16,24 @@ type SortKey = "name" | "speed" | "moneyPerSec";
  * Wired so far: Speed, money, Slow Mode, player list, event timers, hints.
  * Shop / Index / Egg / Paw buttons light up in later phases.
  */
+const CHEATS = import.meta.env.DEV || CHEATS_ENABLED;
+
+/** "9.1k" → 9100, "2.5M" → 2500000, "1e6" → 1000000. NaN for anything else. */
+function parseAmount(text: string): number {
+  const m = /^\s*([\d.]+(?:e\d+)?)\s*([kmbt]?)\s*$/i.exec(text.replace(/[,$]/g, ""));
+  if (!m) return NaN;
+  const mult = { "": 1, k: 1e3, m: 1e6, b: 1e9, t: 1e12 }[m[2].toLowerCase() as "" | "k" | "m" | "b" | "t"];
+  return Number(m[1]) * mult;
+}
+
 export class Hud {
   private speedEl: HTMLElement;
   private moneyEl: HTMLElement;
   private listEl: HTMLElement;
   private statusEl: HTMLElement;
   private debugEl: HTMLElement;
-  onDevToggleNight?: () => void;
+  /** Cheat panel action: "speed" | "money" | "gems" (set exact), "addMoney", "night", "egg", "grow". */
+  onCheat?: (kind: string, value: number) => void;
   private slowToggle: HTMLElement;
   private helpEl: HTMLElement;
   private nightEl: HTMLElement;
@@ -71,6 +82,7 @@ export class Hud {
           <button class="tb-btn menu" title="Menu">☰</button>
           <button class="tb-btn bag" title="Inventory (B)">🎒</button>
           <button class="tb-btn controls" title="Controls (H)">❗</button>
+          ${CHEATS ? '<button class="tb-btn cheat" title="Cheats (debug)">🛠️</button>' : ""}
         </div>
         <div class="tb-menu panel" hidden>
           <div class="tm-row"><b>Graphics</b><span class="tm-opts">
@@ -109,7 +121,19 @@ export class Hud {
           <div class="pl-rows"></div>
         </div>
         <div class="debug" hidden></div>
-        ${import.meta.env.DEV ? '<button class="dev-night" type="button">🌗 Toggle Night</button>' : ""}
+        ${
+          CHEATS
+            ? `<div class="cheat-panel panel" hidden>
+          <b>🛠️ Cheats <small>(debug)</small></b>
+          <div class="ch-row"><label>Speed</label><input class="ch-speed" placeholder="e.g. 9.1k, 170k, 2.5M" /><button data-cheat="setSpeed">Set</button></div>
+          <div class="ch-quick"><button data-cheat="speed" data-v="1000">1K</button><button data-cheat="speed" data-v="100000">100K</button><button data-cheat="speed" data-v="10000000">10M</button><button data-cheat="speed" data-v="1000000000">1B</button><button data-cheat="speed" data-v="0">0</button></div>
+          <div class="ch-row"><label>Money</label><input class="ch-money" placeholder="e.g. 5M" /><button data-cheat="setMoney">Set</button></div>
+          <div class="ch-quick"><button data-cheat="addMoney" data-v="1000000">+1M</button><button data-cheat="addMoney" data-v="1000000000">+1B</button></div>
+          <div class="ch-row"><label>Gems</label><input class="ch-gems" placeholder="e.g. 500" /><button data-cheat="setGems">Set</button></div>
+          <div class="ch-quick"><button data-cheat="night">🌗 Night / Day</button><button data-cheat="egg">🥚 Free egg</button><button data-cheat="grow">⏩ Grow eggs</button></div>
+        </div>`
+            : ""
+        }
         <div class="help panel">
           <b>Controls</b><br/>
           ${isTouch ? "Left thumb: move · Right side drag: camera · ⬆: jump · Tap a hotbar slot to hold it, the action button to use it · Hold 👆 on an egg: steal" : "WASD / arrows: move · Space: jump · Hold E: steal egg · 1–0: hotbar · F: use held item · B: inventory · Drag mouse: camera · Wheel: zoom"}<br/>
@@ -124,10 +148,23 @@ export class Hud {
     this.listEl = q(".pl-rows");
     this.statusEl = q(".hud-status");
     this.debugEl = q(".debug");
-    this.root.querySelector(".dev-night")?.addEventListener("click", (e) => {
-      (e.currentTarget as HTMLElement).blur(); // keep Space/Enter from re-triggering it
-      this.onDevToggleNight?.();
+    // Cheat panel (debug builds and the live build while CHEATS_ENABLED): parses "9.1k" / "2.5M" style numbers.
+    const panel = this.root.querySelector<HTMLElement>(".cheat-panel");
+    this.root.querySelector(".tb-btn.cheat")?.addEventListener("click", () => panel && (panel.hidden = !panel.hidden));
+    panel?.addEventListener("click", (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-cheat]");
+      if (!btn) return;
+      const kind = btn.dataset.cheat!;
+      const read = (sel: string) => parseAmount((panel.querySelector(sel) as HTMLInputElement).value);
+      if (kind === "setSpeed") this.onCheat?.("speed", read(".ch-speed"));
+      else if (kind === "setMoney") this.onCheat?.("money", read(".ch-money"));
+      else if (kind === "setGems") this.onCheat?.("gems", read(".ch-gems"));
+      else this.onCheat?.(kind, Number(btn.dataset.v ?? 0));
+      btn.blur();
     });
+    // Typing in a cheat box must not move the character or fire hotkeys.
+    panel?.addEventListener("keydown", (e) => e.stopPropagation());
+    panel?.addEventListener("keyup", (e) => e.stopPropagation());
     this.slowToggle = q(".slow-mode");
     this.helpEl = q(".help");
     this.nightEl = q(".timer.night .val");

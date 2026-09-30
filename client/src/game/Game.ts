@@ -218,7 +218,15 @@ export class Game {
       shake: (s) => this.rig.shake(s),
       avatarOf: (id) => (id === this.room?.sessionId ? (this.myAvatar ?? undefined) : this.remotes.get(id)?.avatar),
     });
-    if (import.meta.env.DEV) this.hud.onDevToggleNight = () => this.room?.send(MSG.DevToggleNight);
+    this.hud.onCheat = (kind, value) => {
+      const room = this.room;
+      if (!room) return;
+      if (kind === "night") room.send(MSG.DevToggleNight);
+      else if (kind === "egg") room.send(MSG.DevEgg);
+      else if (kind === "grow") this.pen.devGrow();
+      else if (kind === "addMoney") room.send(MSG.DevSet, { money: (this.myView?.money ?? 0) + value });
+      else if (Number.isFinite(value) && value >= 0) room.send(MSG.DevSet, kind === "speed" ? { speed: value } : kind === "money" ? { money: value } : { gems: value });
+    };
     this.hud.onSlowModeChange = (on) => this.setSlowMode(on);
     this.input.onKey((code) => {
       if (code === "KeyC") this.setSlowMode(!this.me.slowMode);

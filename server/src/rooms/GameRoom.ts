@@ -1,5 +1,6 @@
 import { Room, type Client } from "colyseus";
 import {
+  CHEATS_ENABLED,
   Anim,
   CHEST,
   CLOSE,
@@ -69,7 +70,7 @@ interface PlayerMeta {
 }
 
 /** Testing shortcuts; disabled when NODE_ENV=production. */
-const DEV_CHEATS = process.env.NODE_ENV !== "production";
+const DEV_CHEATS = CHEATS_ENABLED || process.env.NODE_ENV !== "production";
 
 const TICK_MS = 50;
 const PERF_EVERY_SEC = 10;
@@ -180,6 +181,16 @@ export class GameRoom extends Room<{ state: GameState }> {
         const p = this.state.players.get(client.sessionId);
         if (!p) return;
         p.speedStat = action === "up" ? Math.min(1e12, p.speedStat * 10 + 10) : 0;
+      });
+      this.onMessage(MSG.DevSet, (client, msg: unknown) => {
+        const p = this.state.players.get(client.sessionId);
+        const m = typeof msg === "object" && msg ? (msg as { speed?: unknown; money?: unknown; gems?: unknown }) : {};
+        if (!p) return;
+        const ok = (v: unknown, max: number): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= max;
+        if (ok(m.speed, 1e12)) p.speedStat = Math.floor(m.speed);
+        if (ok(m.money, 1e15)) p.money = Math.floor(m.money);
+        if (ok(m.gems, 1e9)) this.progress.devSetGems(client.sessionId, Math.floor(m.gems));
+        this.pens.changed(client.sessionId); // refresh the displays and save
       });
       this.onMessage(MSG.DevToggleNight, () => this.devToggleNight());
       this.onMessage(MSG.DevGrow, (client) => this.pens.devGrow(client.sessionId));

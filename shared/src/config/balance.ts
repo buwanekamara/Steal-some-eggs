@@ -160,6 +160,12 @@ export const SAVE = {
   autosaveSec: 30,
 } as const;
 
+/**
+ * Debug cheats (the 🛠️ panel in the top-left bar, and their server handlers) are available while this is true, even in a
+ * production build. Set it to false before the game is released for real.
+ */
+export const CHEATS_ENABLED = true;
+
 export const DEV = {
   /** Speed stat given to brand-new profiles. */
   startingSpeedStat: 0,
