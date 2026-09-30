@@ -96,6 +96,8 @@ const AUTOTRAIN = import.meta.env.DEV && new URLSearchParams(location.search).ha
 export function serverUrl() {
   const fromQuery = new URLSearchParams(location.search).get("server");
   if (fromQuery) return fromQuery;
+  // Split hosting (e.g. client on Netlify, server on Render): the build sets VITE_SERVER_URL.
+  if (import.meta.env.VITE_SERVER_URL) return import.meta.env.VITE_SERVER_URL as string;
   // Production: the game server serves this page, so it's the same origin. Dev: Vite on :5173, the server on :2567.
   if (import.meta.env.PROD) return location.origin;
   const proto = location.protocol === "https:" ? "https:" : "http:";
