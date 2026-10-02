@@ -33,6 +33,8 @@ import {
   useSpot,
   walkSpeedFromStat,
   biomeSpeedMult,
+  parseLook,
+  MAX_LOOK_LENGTH,
   type CooldownMsg,
   type CorrectMsg,
   type UseMsg,
@@ -137,6 +139,12 @@ export class GameRoom extends Room<{ state: GameState }> {
     // So it is obvious in the server log which guardian speeds this process is actually using (restart after editing shared config).
     console.log("[guardians] chase speeds:", GUARDIANS.map((g) => `${g.biome} ${g.chaseSpeed}`).join(", "));
     this.onMessage(MSG.Move, (client, msg: MoveMsg) => this.handleMove(client, msg));
+    this.onMessage(MSG.SetLook, (client, look: unknown) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || typeof look !== "string" || look.length > MAX_LOOK_LENGTH) return;
+      const parsed = parseLook(look);
+      p.look = parsed ? JSON.stringify(parsed) : "";
+    });
     this.onMessage(MSG.SlowMode, (client, on: unknown) => {
       const p = this.state.players.get(client.sessionId);
       if (p && typeof on === "boolean") p.slowMode = on;
@@ -229,6 +237,8 @@ export class GameRoom extends Room<{ state: GameState }> {
     p.money = profile.money;
     p.treadmillLevel = profile.treadmillLevel;
     p.eggCount = profile.eggs.length;
+    const look = typeof options.look === "string" ? parseLook(options.look) : null;
+    p.look = look ? JSON.stringify(look) : "";
     this.state.players.set(client.sessionId, p);
 
     const now = Date.now();

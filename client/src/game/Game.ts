@@ -25,6 +25,7 @@ import {
   petDisplayName,
   trailMult,
   walkSpeedFromStat,
+  parseLook,
   type CooldownMsg,
   type FusedMsg,
   type CorrectMsg,
@@ -35,6 +36,7 @@ import {
 import type { ModelLibrary } from "../assets/ModelLibrary.ts";
 import { music } from "../audio/Music.ts";
 import { sfx } from "../audio/Sfx.ts";
+import * as bloxity from "../bloxity/bloxity.ts";
 import { Avatar } from "../entities/Avatar.ts";
 import { RemotePlayer } from "../entities/RemotePlayer.ts";
 import { TrailRibbon } from "../entities/TrailRibbon.ts";
@@ -82,6 +84,7 @@ interface PlayerView {
   equipped: string;
   equippedUid: string;
   equippedModel: string;
+  look: string;
 }
 
 interface StateView {
@@ -201,6 +204,8 @@ export class Game {
       clearSlot: (slot) => this.room?.send(MSG.HotbarClear, slot),
     });
     this.hud.onBagButton = () => this.backpack.toggle();
+    this.hud.onAvatarButton = () => bloxity.toggleCustomizer();
+    bloxity.onLookChanged(() => this.applyMyLook());
     this.hud.onGraphics = (graphics) => this.changeSettings({ ...this.settings, graphics });
     this.hud.onSound = (sound) => this.changeSettings({ ...this.settings, sound });
     this.hud.onSlotClick = (slot) => this.hotbarSlotClicked(slot);
@@ -258,11 +263,21 @@ export class Game {
     this.applySettings(); // also sizes the canvas
   }
 
+  /** My character shows my Bloxity look; everyone else gets it through the room state (PlayerState.look). */
+  private applyMyLook() {
+    const look = bloxity.currentLook();
+    void this.myAvatar?.setLook(look, look ? (bloxity.localSkinTextureUrl() ?? undefined) : undefined);
+    this.room?.send(MSG.SetLook, look ? JSON.stringify(look) : "");
+  }
+
   async connect(name: string) {
     this.hud.setStatus("Connecting…");
     const client = new Client(serverUrl());
-    const options: JoinOptions = { name, profileId: getProfileId() };
+    const look = bloxity.currentLook();
+    const options: JoinOptions = { name, profileId: getProfileId(), look: look ? JSON.stringify(look) : undefined };
     this.room = await client.joinOrCreate(ROOM_NAME, options);
+    bloxity.updateRoom(this.room.roomId);
+    bloxity.gameplayStart();
     sfx.hushUntil = performance.now() + 3000; // things that already exist on join stay quiet
     const room = this.room;
     const cb = Callbacks.get(room);
@@ -296,6 +311,7 @@ export class Game {
         this.me.ry = p.ry;
         this.myAvatar = new Avatar(this.lib, p.name, p.baseIndex);
         this.world.scene.add(this.myAvatar.root);
+        this.applyMyLook();
         let lastSpeed = p.speedStat;
         let lastMoney = p.money;
         this.applyMyStats(p);
@@ -328,6 +344,8 @@ export class Game {
         r.avatar.setHeld(p.equipped, p.equippedModel);
         this.remotes.set(id, r);
         this.world.scene.add(r.avatar.root);
+        void r.avatar.setLook(parseLook(p.look));
+        cb.listen(p, "look", (look: string) => void r.avatar.setLook(parseLook(look)), false);
         cb.onChange(p, () => r.push({ x: p.x, y: p.y, z: p.z, ry: p.ry, anim: p.anim as MoveMsg["anim"] }));
         cb.listen(p, "equipped", () => r.avatar.setHeld(p.equipped, p.equippedModel));
         cb.listen(p, "equippedModel", () => r.avatar.setHeld(p.equipped, p.equippedModel));
@@ -380,6 +398,8 @@ export class Game {
 
     room.onMessage(MSG.Correct, (m: CorrectMsg) => this.me.snapTo(m.x, m.y, m.z));
     room.onLeave((code) => {
+      bloxity.gameplayEnd();
+      bloxity.updateRoom("");
       if (code === CLOSE.TakenOver) {
         this.hud.showOverlay("Playing somewhere else", "This profile joined from another tab or device, so this one was disconnected. Your progress is saved.");
       } else {

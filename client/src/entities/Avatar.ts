@@ -1,6 +1,7 @@
 import * as THREE from "three";
-import { Anim, EGG_BY_ID, PET_BY_ID, eggModelId, groundHeightAt, petModelId } from "@egg/shared";
+import { Anim, EGG_BY_ID, PET_BY_ID, eggModelId, groundHeightAt, petModelId, type BloxityLook } from "@egg/shared";
 import type { ModelLibrary } from "../assets/ModelLibrary.ts";
+import { BloxityCharacter } from "../bloxity/BloxityCharacter.ts";
 import { TextLabel } from "../ui/labels.ts";
 
 /** Shirt colors per base index so players are easy to tell apart. */
@@ -280,6 +281,8 @@ export class Avatar {
   /** Orientation the held item should have in character space (bats lean forward a little); applied every frame. */
   private handQ = new THREE.Quaternion();
   private heldTool = "";
+  /** How far held items sit in front of the hand (Bloxity characters hold them closer). */
+  private reach = 1;
   private label: TextLabel;
   private rig: { update(dt: number, anim: Anim, speed: number, ragdoll?: RagdollInput): void; kick?(strength: number): void } | null;
   /** Pivot at the hips, so the knockback tumble spins around the body's middle. */
@@ -297,21 +300,80 @@ export class Avatar {
     spin: new THREE.Vector3(),
   };
 
+  /** The body currently shown: the game's own character, or a Bloxity character. */
+  private model: THREE.Object3D | null = null;
+  private bloxity: BloxityCharacter | null = null;
+  /** Identifies the look being shown or loaded ("" = the game's own character). */
+  private lookKey = "";
+  /** The game character's height; Bloxity characters are scaled to match. */
+  private height = 2;
+  private disposed = false;
+
   constructor(
     private lib: ModelLibrary,
     name: string,
-    tintIndex: number,
+    private tintIndex: number,
   ) {
-    const model = lib.instance("player", { tint: PLAYER_TINTS[tintIndex % PLAYER_TINTS.length] });
+    this.rig = null;
     this.tumble.position.y = 1;
-    model.position.y = -1;
-    this.tumble.add(model);
     this.root.add(this.tumble);
     this.carrySlot.position.set(0, 1.15, 0.2); // 2.15 above the feet (tumble pivot is at y = 1)
     this.tumble.add(this.carrySlot);
-    const character = model.getObjectByName("model")!.children[0];
+    const model = this.defaultModel();
+    const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+    if (size.y > 0.5) this.height = size.y;
+    this.mount(model, model.getObjectByName("model")!.children[0]);
+
+    this.label = new TextLabel(name, { lineHeight: 0.45 });
+    this.label.position.y = 2.35;
+    this.root.add(this.label);
+  }
+
+  private defaultModel() {
+    return this.lib.instance("player", { tint: PLAYER_TINTS[this.tintIndex % PLAYER_TINTS.length] });
+  }
+
+  /**
+   * Shows a Bloxity character (null = back to the game's own character). Loads in the background; the current body
+   * stays until the new one is ready. `skinUrl` overrides the body texture (the local player's own SDK url).
+   */
+  async setLook(look: BloxityLook | null, skinUrl?: string) {
+    const key = look ? JSON.stringify(look) + (skinUrl ?? "") : "";
+    if (key === this.lookKey) return;
+    this.lookKey = key;
+    if (!look) {
+      if (!this.bloxity) return;
+      this.bloxity.dispose();
+      this.bloxity = null;
+      const model = this.defaultModel();
+      this.mount(model, model.getObjectByName("model")!.children[0]);
+      return;
+    }
+    try {
+      const c = await BloxityCharacter.create(look, this.height, skinUrl);
+      if (this.lookKey !== key || this.disposed) return c.dispose(); // superseded while loading
+      this.bloxity?.dispose();
+      this.bloxity = c;
+      this.mount(c.root, c.character);
+    } catch (e) {
+      console.warn("[bloxity] couldn't load the character, keeping the default one", e);
+    }
+  }
+
+  /** Puts a body in the tumble pivot and builds its animation rig and hand slot (replacing any previous body). */
+  private mount(model: THREE.Object3D, character: THREE.Object3D) {
+    this.model?.removeFromParent();
+    this.model = model;
+    model.position.y = -1;
+    this.tumble.add(model);
     this.rig = ClipRig.tryCreate(character) ?? new ProceduralRig(character);
     if (this.rig instanceof ProceduralRig) this.rig.runRate = 1.8;
+    this.handSlot.removeFromParent();
+    this.handSlot.position.set(0, 0, 0);
+    this.handSlot.rotation.set(0, 0, 0);
+    this.handSlot.scale.set(1, 1, 1);
+    this.armHold = false;
+    this.armBone = null;
     // Held items ride on the right hand (arm bone), so they follow the raised arm. Models whose arm we can't find
     // fall back to a fixed slot beside the body.
     const arm = this.rig instanceof ProceduralRig ? this.rig.limbObject("armR") : null;
@@ -341,10 +403,11 @@ export class Avatar {
       this.handSlot.rotation.set(2.5, 0, -0.3);
       this.tumble.add(this.handSlot);
     }
-
-    this.label = new TextLabel(name, { lineHeight: 0.45 });
-    this.label.position.y = 2.35;
-    this.root.add(this.label);
+    this.reach = this.bloxity ? 0.2 : 1;
+    // Re-hold whatever was in hand, on the new rig.
+    const [kind, heldModel = ""] = this.heldTool.split(":");
+    this.heldTool = "";
+    if (kind) this.setHeld(kind, heldModel);
   }
 
   /** Plays the bat swing on the right arm (no-op unless a tool is held in hand on a rig we can pose). */
@@ -385,9 +448,9 @@ export class Avatar {
     if (this.armHold) {
       // The slot is re-aligned to the character every frame (see update), so items keep their upright authoring pose.
       this.handQ.setFromAxisAngle(_axisX, kind === "bat" ? 0.15 : 0);
-      if (kind === "bat") this.held.position.set(0, 0, 0.35);
-      if (kind === "egg" || kind === "pet") this.held.position.set(0, -0.1, 0.45);
-      if (kind === "trap") this.held.position.set(0, 0, 0.6);
+      if (kind === "bat") this.held.position.set(0, 0, 0.35 * this.reach);
+      if (kind === "egg" || kind === "pet") this.held.position.set(0, -0.1, 0.45 * this.reach);
+      if (kind === "trap") this.held.position.set(0, 0, 0.6 * this.reach);
       (this.rig as ProceduralRig).setHold(HOLD_ARM);
     } else if (kind === "egg" || kind === "pet") {
       // Fallback slot: eggs and pets are carried upright; tools use the hand slot's downward swing.
@@ -399,6 +462,7 @@ export class Avatar {
   update(dt: number, anim: Anim, speed: number) {
     this.updateRagdoll(dt, anim === Anim.Knocked);
     this.rig?.update(dt, anim, speed, { weight: this.rag.weight, landed: this.rag.landed });
+    this.bloxity?.update();
     // A stolen egg rides on the head: both hands go up to it (and the single-hand item is put away meanwhile).
     const carrying = this.carrySlot.children.length > 0;
     if (this.armHold) {
@@ -475,6 +539,8 @@ export class Avatar {
   }
 
   dispose() {
+    this.disposed = true;
+    this.bloxity?.dispose();
     this.label.dispose();
     this.root.removeFromParent();
   }

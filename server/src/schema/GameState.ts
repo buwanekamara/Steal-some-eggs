@@ -55,6 +55,8 @@ export class PlayerState extends Schema {
   @type("string") equippedUid = "";
   /** Egg def id / pet species / tool kind, so everyone sees the right model in my hand. */
   @type("string") equippedModel = "";
+  /** Bloxity avatar look (JSON BloxityLook); "" = the game's own character. */
+  @type("string") look = "";
   /** Pets in the pen, keyed by pet uid. */
   @type({ map: PenPetState }) pets = new MapSchema<PenPetState>();
   /** Eggs growing in the pen, keyed by egg uid. */
