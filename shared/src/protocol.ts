@@ -92,6 +92,8 @@ export const MSG = {
   Cooldown: "cooldown",
   /** server → all clients: this player swung their bat (drives the swing animation). payload: session id */
   Swing: "swing",
+  /** client → server: my Bloxity avatar look changed. payload: JSON string (BloxityLook), "" = none */
+  SetLook: "setLook",
 } as const;
 
 export interface HotbarSetMsg {
@@ -258,6 +260,8 @@ export interface JoinOptions {
   name?: string;
   /** Guest profile id kept in the browser (see client/src/game/identity.ts). */
   profileId?: string;
+  /** Bloxity avatar look (JSON BloxityLook) so everyone sees this player's Bloxity character. */
+  look?: string;
 }
 
 /** Close codes the server uses when it disconnects a client on purpose. */

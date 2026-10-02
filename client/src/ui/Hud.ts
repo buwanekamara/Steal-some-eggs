@@ -58,6 +58,7 @@ export class Hud {
   onPawButton?: () => void;
   onOfflineClaim?: () => void;
   onBagButton?: () => void;
+  onAvatarButton?: () => void;
   onGraphics?: (choice: GraphicsChoice) => void;
   onSound?: (on: boolean) => void;
   /** A hotbar slot was clicked/tapped (select it, or arrange it while the inventory is open). */
@@ -82,6 +83,7 @@ export class Hud {
           <button class="tb-btn menu" title="Menu">☰</button>
           <button class="tb-btn bag" title="Inventory (B)">🎒</button>
           <button class="tb-btn controls" title="Controls (H)">❗</button>
+          <button class="tb-btn avatar" title="Customize your Bloxity avatar">👕</button>
           ${CHEATS ? '<button class="tb-btn cheat" title="Cheats (debug)">🛠️</button>' : ""}
         </div>
         <div class="tb-menu panel" hidden>
@@ -185,6 +187,10 @@ export class Hud {
     q(".sq-btn.paw").addEventListener("click", () => this.onPawButton?.());
     this.offlineBannerEl.querySelector(".claim-btn")!.addEventListener("click", () => this.onOfflineClaim?.());
     q(".tb-btn.bag").addEventListener("click", () => this.onBagButton?.());
+    q(".tb-btn.avatar").addEventListener("click", (e) => {
+      (e.currentTarget as HTMLElement).blur();
+      this.onAvatarButton?.();
+    });
     q(".tb-btn.controls").addEventListener("click", (e) => {
       (e.currentTarget as HTMLElement).blur(); // keep Space/Enter from re-triggering it
       this.toggleHelp();

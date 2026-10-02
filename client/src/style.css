@@ -2389,3 +2389,23 @@ body {
 .cheat-panel button:hover {
   border-color: #ffd21f;
 }
+
+/* Bloxity login on the start screen */
+.start .bx-login {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 600 15px var(--font);
+}
+.start .bx-login:empty {
+  display: none;
+}
+.start .bx-login button {
+  font: 700 14px var(--font);
+  color: #fff;
+  background: #1f8bff;
+  border: 3px solid #111;
+  border-radius: 7px;
+  padding: 4px 12px;
+  cursor: pointer;
+}

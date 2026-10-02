@@ -4,5 +4,6 @@ export * from "./config/eggs.ts";
 export * from "./config/pets.ts";
 export * from "./config/progress.ts";
 export * from "./config/items.ts";
+export * from "./config/bloxity.ts";
 export * from "./protocol.ts";
 export * from "./format.ts";
