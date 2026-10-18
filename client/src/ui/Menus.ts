@@ -108,7 +108,12 @@ export class Menus {
     this.sellM = new Modal(root, "💰 Sell Pets & Eggs", "#4ce11f");
     this.fuseM = new Modal(root, "Fuse Machine", "#8a4dff");
     this.trails = new Modal(root, "Trails Shop", "#c04dff");
-    for (const m of [this.shop, this.index, this.sellM, this.fuseM, this.trails]) m.onTab = () => this.render(m);
+    for (const m of [this.shop, this.index, this.sellM, this.fuseM, this.trails]) {
+      m.onTab = () => this.render(m);
+      m.body.addEventListener("pointerdown", () => (this.scrollDragging = true));
+    }
+    addEventListener("pointerup", () => (this.scrollDragging = false));
+    addEventListener("pointercancel", () => (this.scrollDragging = false));
     this.sellM.onClose = () => this.sellSel.clear();
     this.fuseM.onClose = () => (this.fuseSel = []);
     this.wire();
@@ -146,12 +151,28 @@ export class Menus {
   // ------------------------------------------------------------------ rendering
 
   private render(m: Modal) {
+    // Re-rendering replaces the HTML (e.g. every second while money ticks), which would snap every scroll bar back to
+    // the start: remember where each scrollable part was and put it back. A drag in progress is left alone.
+    if (this.scrollDragging) return;
+    const scrolled = [m.body, ...m.body.querySelectorAll<HTMLElement>("*")]
+      .map((el, i) => ({ i, left: el.scrollLeft, top: el.scrollTop }))
+      .filter((s) => s.left || s.top);
     if (m === this.shop) this.renderShop();
     else if (m === this.index) this.renderIndex();
     else if (m === this.sellM) this.renderSell();
     else if (m === this.fuseM) this.renderFuse();
     else if (m === this.trails) this.renderTrails();
+    const els = [m.body, ...m.body.querySelectorAll<HTMLElement>("*")];
+    for (const s of scrolled) {
+      const el = els[s.i];
+      if (!el) continue;
+      el.scrollLeft = s.left;
+      el.scrollTop = s.top;
+    }
   }
+
+  /** True while the mouse button is held down (dragging a scroll bar): re-renders wait until it's released. */
+  private scrollDragging = false;
 
   private gemsBadge() {
     return `<span class="gems-pill">💎 ${formatShort(this.data.inv?.gems ?? 0)}</span>`;
