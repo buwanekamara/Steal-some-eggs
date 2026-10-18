@@ -120,7 +120,7 @@ const GUARDIAN_DEFS: GuardianDef[] = [
     name: "Broody Hen",
     biome: "forest",
     home: guardianHome("forest"),
-    chaseSpeed: 10.5,
+    chaseSpeed: 16,
     walkSpeed: 7,
     alertTime: 1.2,
     catchRadius: 2.6,
@@ -262,14 +262,14 @@ const GUARDIAN_DEFS: GuardianDef[] = [
 ];
 
 /**
- * The early biomes are beatable: their guardian runs 10% faster than a player with the biome's recommended Speed
+ * The early biomes are beatable: their guardian runs 45% faster than a player with the biome's recommended Speed
  * (the Forest hen is a bit quicker than a newbie). From the Jungle on, every guardian chases at the same constant, very
  * high speed (a player tops out at 48 without a trail), so only strong trails escape them.
  */
-export const GUARDIAN_CHASE_SPEED = 50;
+export const GUARDIAN_CHASE_SPEED = 62;
 const GENTLE_BIOMES = new Set(["forest", "lake", "desert"]);
 /** How much faster than a player at the recommended Speed the beatable early guardians run. */
-const GENTLE_OVER_RECOMMENDED = 1.1;
+const GENTLE_OVER_RECOMMENDED = 1.45;
 export const GUARDIANS: GuardianDef[] = GUARDIAN_DEFS.map((g) => {
   const rec = BIOMES.find((b) => b.id === g.biome)?.recommendedSpeed ?? 0;
   const chase = GENTLE_BIOMES.has(g.biome) ? Math.max(g.chaseSpeed, +(walkSpeedFromStat(rec) * GENTLE_OVER_RECOMMENDED).toFixed(1)) : GUARDIAN_CHASE_SPEED;
